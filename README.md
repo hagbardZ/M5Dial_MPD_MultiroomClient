@@ -1,4 +1,12 @@
 # M5Dial MPD client
+<img width="384" height="512" alt="mpdremote1" src="https://github.com/user-attachments/assets/59f3c87b-a7ed-4ebd-8933-2f8c7efccc82" />
+
+<img width="384" height="512" alt="mpdremote2" src="https://github.com/user-attachments/assets/91647093-f9b1-40d6-9a6f-60abe9fe14a6" />
+
+
+<img width="384" height="512" alt="mpdremote3" src="https://github.com/user-attachments/assets/47800bf3-b5d4-435e-8b34-dcd98cf3031a" />
+
+
 
 A compact [MPD](https://www.musicpd.org/) remote-control client for the
 **M5Stack M5Dial** (ESP32-S3, 1.28" round GC9A01 display, rotary encoder +
