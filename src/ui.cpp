@@ -767,7 +767,6 @@ static void drawBrowseView(const SharedState& snap) {
         String foot = (String)(sel + 1) + " / " + (String)snap.brCount;
         drawText(CX, 208, cDim, foot.c_str());
     }
-    drawStatusDots(snap.wifi, snap.mpd, true);
 }
 
 // ---------------------------------------------------------------------
