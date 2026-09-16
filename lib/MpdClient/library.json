@@ -1,0 +1,8 @@
+{
+  "name": "MpdClient",
+  "version": "1.0.0",
+  "description": "Minimal MPD protocol client (text protocol over WiFi) with PSRAM playlist storage.",
+  "keywords": "mpd,music,audio,client",
+  "frameworks": ["arduino"],
+  "platforms": ["espressif32"]
+}
