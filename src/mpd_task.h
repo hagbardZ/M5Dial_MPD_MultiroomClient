@@ -1,6 +1,6 @@
 #pragma once
 
-#include <stdint.h>
+#include <Arduino.h>
 
 // Starts the background task that keeps Wi-Fi + MPD connected and
 // reacts to idle events.  Writes into gShared, consumes gCmdQueue.
@@ -44,3 +44,9 @@ const MpdBrowseList* mpdBrowseHandle();
 const MpdPlaylist*   mpdBrowseSongsHandle();
 void mpdBrowseLock();
 void mpdBrowseUnlock();
+
+// Stored-playlist stream-name cache: the loaded queue only carries the
+// stale live stream tags, so the task keeps a url -> EXTINF name map fed
+// from listplaylistinfo.  Returns the station name for a stream URL, or
+// an empty String.  Thread-safe (use from the UI task).
+String mpdExtinfName(const String& file);

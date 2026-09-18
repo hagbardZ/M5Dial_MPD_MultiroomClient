@@ -103,6 +103,8 @@ bool MpdPlaylist::parseBlock(const char* p, const char* end, MpdSong& out) {
                 out.album = val;
             } else if (key == "Title") {
                 out.title = val;
+            } else if (key == "Name") {
+                out.name = val;
             } else if (key == "Pos") {
                 out.pos = val.toInt();
             } else if (key == "Id") {

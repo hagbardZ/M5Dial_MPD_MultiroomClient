@@ -249,6 +249,8 @@ bool MpdClient::currentSong(MpdSong& out) {
             out.album = v;
         } else if (k == "Title") {
             out.title = v;
+        } else if (k == "Name") {
+            out.name = v;
         } else if (k == "Pos") {
             out.pos = v.toInt();
         } else if (k == "Id") {

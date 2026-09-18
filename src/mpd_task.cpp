@@ -52,6 +52,52 @@ static volatile bool     s_brReloadReq   = false;
 static uint32_t          s_lastBrTry     = 0;
 
 // ---------------------------------------------------------------------
+// Stream <-> station-name cache (the queue only carries the stale live
+// Title / icy Name; the EXTINF names live in listplaylistinfo).  Fed
+// whenever a stored playlist is loaded or previewed; the queue view uses
+// it to show the real station name.  Only http(s) URIs are kept (local
+// files already carry their Title in the queue).
+static constexpr uint32_t kExtinfCap = 48;
+static String    s_eUri[kExtinfCap];
+static String    s_eName[kExtinfCap];
+static uint32_t  s_eCount = 0;
+static uint32_t  s_eHead  = 0;
+static SemaphoreHandle_t s_eMux = nullptr;
+
+static void extinfPut(const String& uri, const String& name) {
+    if (uri.length() == 0 || name.length() == 0) return;
+    if (!uri.startsWith("http://") && !uri.startsWith("https://")) return;
+    xSemaphoreTake(s_eMux, portMAX_DELAY);
+    for (uint32_t i = 0; i < s_eCount; ++i)
+        if (s_eUri[i] == uri) {
+            s_eName[i] = name;
+            xSemaphoreGive(s_eMux);
+            return;
+        }
+    if (s_eCount < kExtinfCap) {
+        s_eUri[s_eCount]  = uri;
+        s_eName[s_eCount] = name;
+        s_eCount++;
+    } else {                            // full: FIFO eviction
+        s_eUri[s_eHead]  = uri;
+        s_eName[s_eHead] = name;
+        s_eHead          = (s_eHead + 1) % kExtinfCap;
+    }
+    xSemaphoreGive(s_eMux);
+}
+
+// Copy every stream entry's display name (EXTINF Name, else Title) into
+// the cache.  Call from the MPD task only.
+static void extinfFromPlaylist(const MpdPlaylist& pl) {
+    for (uint32_t i = 0; i < pl.count(); ++i) {
+        MpdSong s;
+        if (!pl.entry(i, s) || s.file.length() == 0) continue;
+        const String& nm = s.name.length() ? s.name : s.title;
+        if (nm.length()) extinfPut(s.file, nm);
+    }
+}
+
+// ---------------------------------------------------------------------
 // helpers to set boolean shared fields safely
 static void setPl(bool v) {
     xSemaphoreTake(gShared.mux, portMAX_DELAY);
@@ -371,7 +417,10 @@ static void doBrowse(uint8_t type, const String& arg, const String& arg2,
         ok = s_listSongs.reloadCmd(
             s_mpd,
             String("listplaylistinfo \"") + arg + "\"");
-        if (ok) { kind = BC_SONGS; cnt = s_listSongs.count(); }
+        if (ok) {
+            kind = BC_SONGS; cnt = s_listSongs.count();
+            extinfFromPlaylist(s_listSongs);   // stream EXTINF names
+        }
         strlcpy(title, _slugTitle(arg, false), sizeof title);
         break;
     default: break;
@@ -410,9 +459,17 @@ static void browseAct(uint8_t act, const String& uri) {
         if (s_mpd.addUri(uri)) s_mpd.playPos(before);
         break;
     }
-    case ACT_LOAD_PL:
-        if (s_mpd.loadPlaylist(uri)) s_mpd.playPos(0);
+    case ACT_LOAD_PL: {
+        if (s_mpd.loadPlaylist(uri)) {
+            // The loaded queue only reports the stale live stream tags, so
+            // re-read the stored playlist to cache the EXTINF names.
+            MpdPlaylist pl;
+            if (pl.reloadCmd(s_mpd, String("listplaylistinfo \"") + uri + "\""))
+                extinfFromPlaylist(pl);
+            s_mpd.playPos(0);
+        }
         break;
+    }
     }
     s_plReloadReq = true;  // queue changed, refresh
 }
@@ -562,6 +619,7 @@ static void logFetchCap() {
 void startMpdTask() {
     if (s_plMux == nullptr) s_plMux = xSemaphoreCreateMutex();
     if (s_brMux == nullptr) s_brMux = xSemaphoreCreateMutex();
+    if (s_eMux == nullptr)  s_eMux  = xSemaphoreCreateMutex();
 
     // Restore the last selected room, then connect to its port right away.
     Preferences prefs;
@@ -587,3 +645,19 @@ const MpdBrowseList* mpdBrowseHandle()      { return &s_list; }
 const MpdPlaylist*   mpdBrowseSongsHandle() { return &s_listSongs; }
 void mpdBrowseLock()   { xSemaphoreTake(s_brMux, portMAX_DELAY); }
 void mpdBrowseUnlock() { xSemaphoreGive(s_brMux); }
+
+// ---------------------------------------------------------------------
+// Thread-safe lookup of the stored-playlist EXTINF name for a stream URL.
+// Returns "" when the URL is not a cached radio stream.
+String mpdExtinfName(const String& file) {
+    if (file.length() == 0) return String();
+    String hit;
+    xSemaphoreTake(s_eMux, portMAX_DELAY);
+    for (uint32_t i = 0; i < s_eCount; ++i)
+        if (s_eUri[i] == file) {
+            hit = s_eName[i];
+            break;
+        }
+    xSemaphoreGive(s_eMux);
+    return hit;
+}

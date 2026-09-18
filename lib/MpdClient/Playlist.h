@@ -36,7 +36,7 @@ public:
     // "file: xyz" of a given song (without parsing everything)
     bool     fileOf(uint32_t index, String& file) const;
 
-    // Parse a "song" block (file:/Artist:/Album:/Title:/Pos:/Id: lines).
+    // Parse a "song" block (file:/Artist:/Album:/Title:/Name:/Pos:/Id:).
     static bool parseBlock(const char* start, const char* end, MpdSong& out);
 
 private:

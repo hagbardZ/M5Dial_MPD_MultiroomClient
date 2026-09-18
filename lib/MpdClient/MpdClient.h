@@ -27,6 +27,9 @@ struct MpdSong {
     String artist;
     String album;
     String title;
+    // Stream "Name" tag: the EXTINF title of a stored-playlist entry
+    // (listplaylistinfo) or the stream's icy name in the queue.
+    String name;
     int    pos = -1;
     int    id  = -1;
     bool   valid() const { return file.length() > 0 || title.length() > 0; }

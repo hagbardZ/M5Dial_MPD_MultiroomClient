@@ -332,6 +332,19 @@ static String displayTitle(const MpdSong& song, const String& fallback) {
     return displayTitle(song);
 }
 
+// For queue / playlist-preview rows: radio streams in the queue only carry
+// the stale live Title (or an icy Name), so prefer the stored-playlist
+// EXTINF name cached by the MPD task, then any Name tag, then Title.
+static String displayName(const MpdSong& song) {
+    if (song.file.length() > 0) {
+        String extinf = mpdExtinfName(song.file);
+        if (extinf.length() > 0) return extinf;
+    }
+    if (song.name.length() > 0) return song.name;
+    if (song.title.length() > 0) return song.title;
+    return displayTitle(song);
+}
+
 // ---------------------------------------------------------------------
 static void drawNowView(const SharedState& snap) {
     const MpdStatus st   = snap.status;
@@ -627,7 +640,7 @@ static void drawPlaylistView(const SharedState& snap) {
 
         String text;
         if (idx == snap.status.pos) text = "> ";
-        text += (String)(idx + 1) + "  " + displayTitle(e);
+        text += (String)(idx + 1) + "  " + displayName(e);
         if (e.artist.length()) text += " - " + e.artist;
         text = truncate(text, 196);
 
@@ -744,7 +757,7 @@ static void drawBrowseView(const SharedState& snap) {
         } else {  // BC_SONGS
             MpdSong s;
             if (!mpdBrowseSongsHandle()->entry(idx, s)) continue;
-            String text = displayTitle(s);
+            String text = displayName(s);
             if (s.artist.length()) text += " - " + s.artist;
             txt[n] = truncate(text, 190);
             box[n] = isSel;
@@ -1043,7 +1056,7 @@ static void browseDecide(uint32_t idx, bool dbl) {
     if (!browseSong(idx, s) || s.file.length() == 0) return;
     actRequest(s.file.c_str());
     post(CMD_ACT, dbl ? (int)ACT_PLAY : (int)ACT_ENQUEUE);
-    String msg = String(dbl ? "playing: " : "queued: ") + displayTitle(s);
+    String msg = String(dbl ? "playing: " : "queued: ") + displayName(s);
     showToast(msg.c_str(), dbl ? cWarn : cHighlight);
     s_dirty = true;
 }
