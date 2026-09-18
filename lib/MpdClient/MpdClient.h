@@ -13,6 +13,7 @@ struct MpdStatus {
     bool     stopped  = true;
     bool     repeat   = false;
     bool     random   = false;
+    bool     single   = false;
     int      elapsed  = 0;    // seconds
     int      duration = 0;    // seconds
     int      pos      = -1;   // queue position of current song
@@ -73,7 +74,14 @@ public:
     bool   currentSong(MpdSong& out);
     // Raw multi-line response into a growable buffer (PSRAM preferred).
     // Caller owns *buf and must free with heap_caps_free().
-    bool   fetchLineList(const String& cmd, char** buf, size_t* len);
+    // If `keep` is non-null, only lines starting with one of the `nKeep`
+    // prefixes are stored in the buffer - all other lines are still read
+    // from the socket (protocol stays in sync) but discarded.  This keeps
+    // bulky responses small (e.g. lsinfo drops per-file tag blocks) so they
+    // fit the internal-RAM heap on parts without usable PSRAM.
+    bool fetchLineList(const String& cmd, char** buf, size_t* len,
+                       const char* const* keep = nullptr,
+                       size_t nKeep = 0);
     // Reason the last fetchLineList() call failed (FE_OK on success).
     FetchErr lastFetchErr() const { return _fetchErr; }
 
@@ -88,6 +96,7 @@ public:
     bool   loadPlaylist(const String& name);  // "load <name>"
     bool   setRandom(bool on);
     bool   setRepeat(bool on);
+    bool   setSingle(bool on);
 
     const String& ack() const { return _ack; }
 

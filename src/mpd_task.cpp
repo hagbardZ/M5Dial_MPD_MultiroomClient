@@ -51,6 +51,9 @@ static SemaphoreHandle_t s_brMux;        // guards s_list + s_listSongs
 static volatile bool     s_brReloadReq   = false;
 static uint32_t          s_lastBrTry     = 0;
 
+// ---- NTP --------------------------------------------------------------
+static bool s_ntpInit = false;   // configTime() issued once after Wi-Fi
+
 // ---------------------------------------------------------------------
 // Stream <-> station-name cache (the queue only carries the stale live
 // Title / icy Name; the EXTINF names live in listplaylistinfo).  Fed
@@ -226,20 +229,24 @@ static void execCommand(const MpdCommand& c) {
             }
             refreshShared();
             break;
-        case CMD_SET_REPEAT:
+        case CMD_SET_REPEAT: {
+            bool next;
             if (c.value < 0) {
                 bool cur = [] {
                     xSemaphoreTake(gShared.mux, portMAX_DELAY);
-                    bool r = gShared.status.repeat;
+                    bool r = gShared.status.single;
                     xSemaphoreGive(gShared.mux);
                     return r;
                 }();
-                s_mpd.setRepeat(!cur);
+                next = !cur;
             } else {
-                s_mpd.setRepeat(c.value != 0);
+                next = (c.value != 0);
             }
+            s_mpd.setRepeat(next);
+            s_mpd.setSingle(next);
             refreshShared();
             break;
+        }
         case CMD_CLEAR:
             s_mpd.sendCommand("clear");
             s_plReloadReq = true;
@@ -501,6 +508,12 @@ static void mpdTask(void*) {
                 vTaskDelay(pdMS_TO_TICKS(1000));
                 continue;
             }
+        }
+
+        // ---- 1b. NTP once ---------------------------------------------
+        if (!s_ntpInit) {
+            s_ntpInit = true;
+            configTime((long)TIMEZONE_UTC_HOURS * 3600, 0, NTP_SERVER);
         }
 
         // ---- 2. MPD connection ----------------------------------------

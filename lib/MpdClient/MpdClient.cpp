@@ -214,6 +214,8 @@ bool MpdClient::status(MpdStatus& out) {
             out.repeat = (v == "1");
         } else if (k == "random") {
             out.random = (v == "1");
+        } else if (k == "single") {
+            out.single = (v == "1" || v == "oneshot");
         }
     }
     if (!ok) return false;
@@ -286,7 +288,8 @@ static void _initCap() {
                   (unsigned)s_cap);
 }
 
-bool MpdClient::fetchLineList(const String& cmd, char** buf, size_t* len) {
+bool MpdClient::fetchLineList(const String& cmd, char** buf, size_t* len,
+                              const char* const* keep, size_t nKeep) {
     *buf       = nullptr;
     *len       = 0;
     _fetchErr  = FE_OK;
@@ -321,6 +324,13 @@ bool MpdClient::fetchLineList(const String& cmd, char** buf, size_t* len) {
         if (line.startsWith("ACK")) {
             fail = FE_BAD;
             break;
+        }
+        if (nKeep) {
+            bool hit = false;
+            for (size_t i = 0; i < nKeep; ++i) {
+                if (line.startsWith(keep[i])) { hit = true; break; }
+            }
+            if (!hit) continue;   // discard metadata/tag and other extra lines
         }
         size_t need = used + line.length() + 2;
         if (need > cap) {
@@ -379,6 +389,7 @@ bool MpdClient::stop()   { return sendCommand("stop"); }
 bool MpdClient::playPos(int pos) { return sendCommand("play " + String(pos)); }
 bool MpdClient::setRandom(bool on) { return sendCommand(on ? "random 1" : "random 0"); }
 bool MpdClient::setRepeat(bool on) { return sendCommand(on ? "repeat 1" : "repeat 0"); }
+bool MpdClient::setSingle(bool on) { return sendCommand(on ? "single 1" : "single 0"); }
 
 // ---------------------------------------------------------------------
 // "add" takes the rest of the line as its single argument, so URIs/filenames

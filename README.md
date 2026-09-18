@@ -19,11 +19,18 @@ style), and reconnects automatically.
 ## Features
 
 - **Now-playing screen** — artist / title / album, smooth progress ring,
-  elapsed + total time, play state, volume, connection status LEDs.
-  Long titles scroll (marquee) around the round screen.
-- **Playback control** — play/pause, next, previous, stop, volume.
+  elapsed + total time, play state, volume.  Long titles scroll (marquee)
+  around the round screen.
+- **Webradio** — streams show the station name instead of the artist, and
+  the real wall-clock time (NTP-synced, timezone offset configurable)
+  instead of the meaningless stream play time.
+- **Playback control** — play/pause, next, previous, stop, volume, and a
+  repeat toggle that always repeats the **current song** (`repeat` + `single`),
+  never the whole queue.
 - **Main menu** — hold in the now-playing screen for a menu hub:
   Queue, Files, Library, Playlists, Back.
+- **Idle auto-return** — after `MENU_TIMEOUT_MS` without any input, every
+  screen other than now playing falls back to it automatically.
 - **Queue view** — scroll the MPD queue, press to play an entry.
 - **Files browser** — walk the music directories (`lsinfo`), drill into
   folders, enqueue or play songs / folders / `.m3u` playlists.
@@ -36,8 +43,11 @@ style), and reconnects automatically.
 - **Auto-reconnect** — Wi-Fi and MPD both retry with back-off; the client
   uses MPD's `idle` command (incl. `database` / `stored_playlist`) so the UI
   updates the moment something changes.
-- **PSRAM storage** — the queue and browse listings are kept in ESP-PSRAM as
-  raw protocol text, so very large libraries don't eat the internal heap.
+- **Memory-conscious** — runs in the ~128 KB internal-RAM heap of the
+  PSRAM-less ESP32-S3-FN8.  Directory listings are buffered compactly
+  (the `lsinfo` response is filtered down to `directory:` / `file:` /
+  `playlist:` lines, dropping per-file tag blocks), so even large folders
+  fit without OOM.
 
 ## Hardware / wiring
 
@@ -51,6 +61,7 @@ None — it's an M5Dial. Just power it via USB-C.
 | Knob push (short)  | Play / pause                   | Open / enqueue / play         |
 | Knob push (2×)     | –                              | Play now / load & play (files, songs, playlists) |
 | Knob push (long)   | Open main menu                 | Back (up one level)           |
+| Touch              | Prev/next arrows; tap "playing" for play menu; tap the title for the queue; tap room name to switch rooms | Tap an entry to select / play |
 
 Navigating the browser: rotate to move, click to open a folder / artist /
 album / playlist preview, single-click a song or file to add it to the queue,
@@ -68,7 +79,9 @@ pio device monitor      # serial log at 115200 baud
 
 Requires [PlatformIO Core](https://platformio.org/install) ≥ 6.x.
 The board definition lives in `boards/m5stack-dial.json` (mirrors the
-official Arduino `M5Stack Dial` board: ESP32-S3-FN8, 8 MB flash, OPI PSRAM).
+official Arduino `M5Stack Dial` board).  Note: the M5Dial's ESP32-S3 module
+is the **FN8** variant — 8 MB flash and **no PSRAM** — so the firmware is
+tuned for the ~128 KB internal-RAM heap and never relies on PSRAM.
 The pinned arduino-esp32 fork does not ship the `m5stack_dial` pin map, so it
 is provided project-locally in `variants/m5stack_dial/pins_arduino.h` and wired
 in via the board's `build.variants_dir`.
@@ -82,12 +95,20 @@ Edit `include/config.h` before flashing:
 #define WIFI_SSID      "myssid"        // your 2.4 GHz SSID
 #define WIFI_PASS      "mypassword"
 #define MPD_HOST       "192.168.1.10"  // IP or hostname of the MPD machine
-#define MPD_PORT       6600
+#define MPD_PORT       6600            // default instance port
 #define MPD_PASSWORD   ""              // optional MPD password
+
+#define NTP_SERVER         "pool.ntp.org"  // NTP for the webradio wall clock
+#define TIMEZONE_UTC_HOURS 2              // GMT offset (Germany: CEST=2, CET=1)
+#define MENU_TIMEOUT_MS    5000           // idle auto-return to now playing; 0 = off
 ```
 
 MPD must be listening on TCP 6600 on your network (`bind_to_address` in
 `mpd.conf`, e.g. `"any"` for LAN access). No extra MPD plugins required.
+
+Rooms are defined in `MPD_INSTANCES` (one MPD process per port). The first
+entry is used at boot; switch rooms by tapping the room name shown at the top
+of the now-playing screen (`MODE_INSTS`).
 
 ## Notes
 
@@ -95,8 +116,10 @@ MPD must be listening on TCP 6600 on your network (`bind_to_address` in
   umlauts render fine (DejaVu covers them). Non-Latin scripts would need the
   bundled `efont` fonts.
 - The buzzer and IMU are not used in v1.
-- If PSRAM ever fails to initialise, the UI falls back to an internal-RAM
-  framebuffer and only loses the big-playlist capability.
+- The M5Dial's ESP32-S3-FN8 has no PSRAM; the 240×240 UI frame buffer lives
+  in internal RAM and the client caps RAM usage (compact directory listings,
+  a capped playlist fetch, filtered `lsinfo` buffering) so large libraries
+  never cause an out-of-memory crash.
 
 ## Project layout
 
@@ -121,40 +144,45 @@ example include/config.h:
 //  build with `pio run` and flash with `pio run -t upload`.
 // =====================================================================
 
+// ---- Time (NTP wall clock for webradio) ------------------------------
+// While a webradio stream is playing, the now view shows the local
+// wall-clock time instead of the (meaningless) stream play time.
+#define NTP_SERVER "pool.ntp.org"
+// Time zone offset from UTC in hours (GMT+0 = 0, +1 = 1, +2 = 2, ...).
+// Germany: CEST (summer) = 2, CET (winter) = 1.
+#define TIMEZONE_UTC_HOURS 2
+
+// ---- UI timeout -------------------------------------------------------
+// After this many ms of no input (knob, button or touch) every screen
+// except the now-playing view falls back to now playing.  0 disables it.
+#define MENU_TIMEOUT_MS 5000
+
 // ---- Wi-Fi -----------------------------------------------------------
-#define WIFI_SSID "YOUR_WIFI_SSD"
+#define WIFI_SSID "YOUR_WIFI_SSID"
 #define WIFI_PASS "YOUR_WIFI_PASSWD"
 
 // ---- MPD server ------------------------------------------------------
 // IP address or hostname of the machine running MPD (port 6600).
-#define MPD_HOST "192.168.23.1"
-#define MPD_PORT 6601
+#define MPD_HOST "192.168.1.10"
+#define MPD_PORT 6600
 // Optional MPD password (leave empty if MPD has no password set).
 #define MPD_PASSWORD ""
 
 // ---- MPD instances ---------------------------------------------------
 // One MPD per room, each on its own port.  Define the port for each room,
 // then add both the on-screen name and the define to MPD_INSTANCES below.
-#define Room1           6600
-#define Room2        6601
-#define Room3      6603
-#define Room4              6602
-#define Room5          6607
-#define Room6            6605
-#define Room7          6604
-#define Room8            6606
 
-// List shown in the menu: { display name, port define }.
+// List shown in the room picker: { display name, port }.
 // The first entry is the default instance used at boot.
 #define MPD_INSTANCES                        \
-    { "Office", Room1 },                   \
-    { "LivingRoom", Room2 },            \
-    { "SleepingRoom", Room3 },        \
-    { "Bath", Room4 },                         \
-    { "Bar", Room5 },                  \
-    { "Kitchen", Room6 },                     \
-    { "Basement", Room7 },                  \
-    { "AllRooms", Room8 }
+    { "LivingRoom", 6600 },                  \
+    { "Bedroom", 6601 },                     \
+    { "Bath", 6602 },                        \
+    { "Kitchen", 6603 },                     \
+    { "Office", 6604 },                      \
+    { "Bar", 6605 },                         \
+    { "Basement", 6606 },                    \
+    { "AllRooms", 6607 }
 ```
 
 

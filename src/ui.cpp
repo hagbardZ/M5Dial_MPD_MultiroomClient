@@ -7,6 +7,7 @@
 #include "Browse.h"
 #include "Playlist.h"
 #include "app.h"
+#include "config.h"
 #include "mpd_task.h"
 
 // ---------------------------------------------------------------------
@@ -23,6 +24,8 @@ static constexpr int R_INNER = 106;
 
 // max horizontal width for centered text (kept clear of the ring)
 static constexpr int TXT_W = 128;
+// artist / station / album lines may use a bit more (~5 extra characters)
+static constexpr int TXT_W2 = TXT_W + 56;
 
 enum Mode : uint8_t {
     MODE_NOW,
@@ -92,8 +95,8 @@ static void showToast(const char* s, uint16_t col) {
     s_toastUntil = millis() + 2200;
 }
 
-static const char* s_menuItems[6] = {"Queue", "Files", "Library", "Playlists",
-                                     "change room", "Back"};
+static const char* s_menuItems[5] = {"Queue", "Files", "Library", "Playlists",
+                                     "Back"};
 
 // colours
 static uint16_t cBg, cRing, cTrack, cProgress, cText, cDim, cOk, cBad,
@@ -105,6 +108,12 @@ static const lgfx::IFont* s_fSmall = &fonts::DejaVu12;
 static const lgfx::IFont* s_fTime  = &fonts::Orbitron_Light_24;
 
 static uint32_t s_drawSig = 0;
+
+// last input (knob/button/touch) timestamp; drives the idle timeout that
+// returns the UI to the now-playing view
+static uint32_t s_lastInput = 0;
+
+static void bumpActivity() { s_lastInput = millis(); }
 
 // ---------------------------------------------------------------------
 static void post(uint8_t type, int32_t value = 0) {
@@ -303,6 +312,19 @@ static void drawStatusDots(bool wifi, bool mpd, bool active) {
 }
 
 // ---------------------------------------------------------------------
+// Filled arrowhead centred on (x, y), pointing `deg` degrees clockwise
+// from right (screen coords, y grows down): 0°=right, 90°=down.
+static void drawArrowHead(int x, int y, float deg, uint16_t col) {
+    float a = deg * (float)PI / 180.0f;
+    float ca = cosf(a), sa = sinf(a);
+    float tipX = x + 4.0f * ca, tipY = y + 4.0f * sa;
+    float bX   = x - 2.0f * ca, bY = y - 2.0f * sa;
+    float wX   = 2.5f * sa,     wY = -2.5f * ca;
+    spr.fillTriangle((int)tipX, (int)tipY, (int)(bX + wX), (int)(bY + wY),
+                     (int)(bX - wX), (int)(bY - wY), col);
+}
+
+// ---------------------------------------------------------------------
 static void drawProgressRing(float frac, uint16_t fill, uint16_t track) {
     spr.fillArc(CX, CY, R_OUTER, R_INNER, 0.0f, 360.0f, track);
     if (frac < 0.001f) return;
@@ -349,6 +371,8 @@ static String displayName(const MpdSong& song) {
 static void drawNowView(const SharedState& snap) {
     const MpdStatus st   = snap.status;
     const MpdSong   song = snap.song;
+    const bool isStream = song.file.startsWith("http://") ||
+                          song.file.startsWith("https://");
 
     spr.fillScreen(cBg);
 
@@ -376,21 +400,41 @@ static void drawNowView(const SharedState& snap) {
     drawProgressRing(frac, cProgress, cTrack);
 
     // ---- time (top) ------------------------------------------------
+    // Streams have no meaningful play time, so show the NTP wall clock
+    // instead (until the time server has been reached for the first time).
     char t[16];
     setFont(s_fTime);
-    fmtTime(showEl, t, sizeof t);
+    if (isStream) {
+        time_t now = time(nullptr);
+        struct tm tmv;
+        if (localtime_r(&now, &tmv) && tmv.tm_year >= 116) {
+            snprintf(t, sizeof t, "%02d:%02d", tmv.tm_hour, tmv.tm_min);
+        } else {
+            fmtTime(showEl, t, sizeof t);   // NTP not synced yet
+        }
+    } else {
+        fmtTime(showEl, t, sizeof t);
+    }
     drawText(CX, 48, cText, t);
     if (st.duration > 0) {
         setFont(s_fSmall);
         fmtTime(st.duration, t, sizeof t);
         String dur = "/ ";
         dur += t;
-        drawText(CX, 64, cDim, dur.c_str());
+        drawText(CX, 67, cDim, dur.c_str());
     }
 
-    // ---- artist -----------------------------------------------------
+    // ---- station name (webradio) or artist ---------------------------
     setFont(s_fSmall);
-    drawText(CX, 92, cDim, truncate(song.artist, TXT_W).c_str());
+    String station;
+    if (isStream) {
+        station = mpdExtinfName(song.file);
+        if (station.length() == 0) station = song.name;
+    }
+    if (station.length() > 0)
+        drawText(CX, 92, cHighlight, truncate(station, TXT_W2).c_str());
+    else
+        drawText(CX, 92, cDim, truncate(song.artist, TXT_W2).c_str());
 
     // ---- title (centre of the screen, marquee if too wide) ----------
     String title = displayTitle(song);
@@ -403,7 +447,7 @@ static void drawNowView(const SharedState& snap) {
 
     // ---- album ------------------------------------------------------
     setFont(s_fSmall);
-    drawText(CX, 148, cDim, truncate(song.album, TXT_W).c_str());
+    drawText(CX, 148, cDim, truncate(song.album, TXT_W2).c_str());
 
     // ---- state ------------------------------------------------------
     setFont(s_fSmall);
@@ -432,29 +476,25 @@ static void drawNowView(const SharedState& snap) {
 
     // ---- repeat / random symbols beside "playing" ---------------------
     {
-        int xsym = 156;   // x of first symbol (just right of state word)
-        int ysym = 178;
+        int ysym  = 178;
+        int xsym  = 70;    // repeat: left of the state word
+        int rx    = 171;   // random: right of the state word
 
-        // repeat: small ring arc (3/4 circle) with arrowhead
-        if (st.repeat) {
-            spr.drawCircle(xsym, ysym, 5, cOk);
-            spr.drawCircle(xsym, ysym, 4, cOk);
-            // arrowhead pointing clockwise (tip at top-right of ring)
-            spr.fillTriangle(xsym + 2, ysym - 7, xsym - 2, ysym - 4,
-                             xsym + 3, ysym - 4, cOk);
+        // repeat: 300° arc (gap at the right) with a clockwise arrowhead
+        if (st.single) {
+            spr.drawArc(xsym, ysym, 9, 5, 30.0f, 330.0f, cOk);
+            // arrowhead at the arc's end (330°), pointing clockwise (60°)
+            int tx = xsym + (int)(7.0f * cosf(330.0f * (float)PI / 180.0f));
+            int ty = ysym + (int)(7.0f * sinf(330.0f * (float)PI / 180.0f));
+            drawArrowHead(tx, ty, 60.0f, cOk);
         }
 
-        // random: two small crossing arrows
+        // random: two crossing arrows (shuffle)
         if (st.random) {
-            int rx = xsym + 24;   // second symbol offset
-            // top-left to bottom-right arrow
-            spr.drawLine(rx - 6, ysym - 6, rx + 4, ysym + 4, cOk);
-            spr.fillTriangle(rx + 4, ysym + 6, rx, ysym + 2, rx + 6, ysym + 2,
-                             cOk);
-            // bottom-left to top-right arrow
-            spr.drawLine(rx - 6, ysym + 6, rx + 4, ysym - 4, cOk);
-            spr.fillTriangle(rx + 4, ysym - 6, rx, ysym - 2, rx + 6, ysym - 2,
-                             cOk);
+            spr.drawLine(rx - 7, ysym - 7, rx + 7, ysym + 7, cOk);
+            drawArrowHead(rx + 7, ysym + 7, 135.0f, cOk);
+            spr.drawLine(rx - 7, ysym + 7, rx + 7, ysym - 7, cOk);
+            drawArrowHead(rx + 7, ysym - 7, 315.0f, cOk);
         }
     }
 
@@ -477,7 +517,6 @@ static void drawNowView(const SharedState& snap) {
                      truncate(String(mpdInstanceName(cin)), 158).c_str());
         }
     }
-    drawStatusDots(snap.wifi, snap.mpd, false);
 }
 
 // ---------------------------------------------------------------------
@@ -485,8 +524,8 @@ static void drawMenuView(const SharedState& snap) {
     spr.fillScreen(cBg);
     setFont(s_fSmall);
     drawText(CX, 34, cDim, "MENU");
-    for (int i = 0; i < 6; ++i) {
-        int  y   = 58 + i * 22;
+    for (int i = 0; i < 5; ++i) {
+        int  y   = 58 + i * 24;
         bool sel = (i == s_menuSel);
         if (sel) spr.fillRoundRect(14, y - 9, 212, 20, 8, cSel);
         drawText(CX, y, sel ? cText : cDim, s_menuItems[i]);
@@ -536,11 +575,11 @@ static void drawInstancesView(const SharedState& snap) {
 static void drawPlayMenuView(const SharedState& snap) {
     spr.fillScreen(cBg);
     setFont(s_fSmall);
-    drawText(CX, 24, cDim, "PLAY");
-    drawText(CX, 44, cDim, "tap to toggle");
+    drawText(CX, 34, cDim, "PLAY");
+    drawText(CX, 54, cDim, "tap to toggle");
 
     for (int i = 0; i < PLAY_ROWS; ++i) {
-        int  y   = 68 + i * 30;
+        int  y   = 78 + i * 30;
         bool sel = (i == s_playSel);
         if (sel) spr.fillRoundRect(14, y - 12, 212, 26, 8, cSel);
 
@@ -551,8 +590,8 @@ static void drawPlayMenuView(const SharedState& snap) {
             text = (snap.status.random ? "[x] " : "[ ] ") + String("Random");
             if (snap.status.random) col = cOk;
         } else if (i == PLAY_REPEAT) {
-            text = (snap.status.repeat ? "[x] " : "[ ] ") + String("Repeat");
-            if (snap.status.repeat) col = cOk;
+            text = (snap.status.single ? "[x] " : "[ ] ") + String("Repeat song");
+            if (snap.status.single) col = cOk;
         } else {
             text = "Clear playlist";
             col  = cBad;
@@ -562,7 +601,7 @@ static void drawPlayMenuView(const SharedState& snap) {
     }
 
     String foot = "hold: back";
-    drawText(CX, 208, cDim, foot.c_str());
+    drawText(CX, 218, cDim, foot.c_str());
     drawStatusDots(snap.wifi, snap.mpd, true);
 }
 
@@ -800,6 +839,17 @@ void uiTick() {
     }
 
     uint32_t now = millis();
+
+    // idle timeout: no input for MENU_TIMEOUT_MS -> back to now playing
+    if (s_mode != MODE_NOW && MENU_TIMEOUT_MS > 0 &&
+        now - s_lastInput >= MENU_TIMEOUT_MS) {
+        if (s_mode == MODE_BROWSE) s_depth = 0;
+        s_mode       = MODE_NOW;
+        s_pend.armed = false;
+        syncModes();
+        s_dirty      = true;
+    }
+
     static uint32_t lastDraw = 0;
     bool timeTick = (now - lastDraw >= 120);
 
@@ -842,6 +892,7 @@ void uiTick() {
 // ---------------------------------------------------------------------
 void uiEncoder(int delta) {
     if (delta == 0) return;
+    bumpActivity();
     if (s_mode == MODE_NOW) {
         // accumulate to cancel ±1 encoder bounce, emit in solid steps
         s_encAcc += delta;
@@ -852,7 +903,7 @@ void uiEncoder(int delta) {
     } else if (s_mode == MODE_MENU) {
         s_menuSel += delta;
         if (s_menuSel < 0) s_menuSel = 0;
-        if (s_menuSel > 5) s_menuSel = 5;
+        if (s_menuSel > 4) s_menuSel = 4;
         s_dirty = true;
     } else if (s_mode == MODE_INSTS) {
         s_instSel += delta;
@@ -890,6 +941,7 @@ static void armPending() {
 
 // ---------------------------------------------------------------------
 void uiButtonClick() {
+    bumpActivity();
     switch (s_mode) {
     case MODE_NOW:
         post(CMD_PLAY_PAUSE);
@@ -922,17 +974,7 @@ void uiButtonClick() {
         case 3:   // Playlists
             enterBrowse(Fb::PLISTS, "");
             break;
-        case 4:   // Instances
-            {
-                SharedState snap0;
-                snapShared(snap0);
-                s_instSel = (int)snap0.curInst;
-            }
-            s_mode = MODE_INSTS;
-            syncModes();
-            s_dirty = true;
-            break;
-        case 5:   // Back (now playing)
+        case 4:   // Back (now playing)
             s_mode = MODE_NOW;
             syncModes();
             s_dirty = true;
@@ -1071,6 +1113,7 @@ static void decideSingle() {
         dbl = false;
     else
         return;
+    bumpActivity();
 
     if (!s_pend.armed || s_pend.depth != s_depth ||
         s_pend.type != (uint8_t)topFrame().type)
@@ -1085,6 +1128,7 @@ void uiButtonDecide() { decideSingle(); }
 
 // ---------------------------------------------------------------------
 void uiButtonHold() {
+    bumpActivity();
     if (s_mode == MODE_NOW) {
         s_mode   = MODE_MENU;
         s_menuSel = 0;
@@ -1117,6 +1161,7 @@ void uiTouchTick() {
     if (s_mode == MODE_NOW) {
         const auto& td = M5Dial.Touch.getDetail();
         if (!td.wasClicked()) return;
+        bumpActivity();
 
         int tx = td.x;
         int ty = td.y;
@@ -1124,6 +1169,25 @@ void uiTouchTick() {
         // tap on the room name row → open instance selector
         if (ty >= 16 && ty <= 44) {
             s_mode = MODE_INSTS;
+            syncModes();
+            s_dirty = true;
+            return;
+        }
+
+        // tap on the scrolling title → open the queue view
+        if (ty >= 105 && ty <= 140) {
+            s_mode = MODE_QUEUE;
+            {
+                SharedState snap;
+                snapShared(snap);
+                s_songSel = snap.status.pos >= 0 ? snap.status.pos : 0;
+            }
+            requestPlaylistReload();
+            {
+                xSemaphoreTake(gShared.mux, portMAX_DELAY);
+                gShared.plSel = s_songSel;
+                xSemaphoreGive(gShared.mux);
+            }
             syncModes();
             s_dirty = true;
             return;
@@ -1152,6 +1216,7 @@ void uiTouchTick() {
         // Touching an entry plays it (acts like a double-click).
         const auto& td = M5Dial.Touch.getDetail();
         if (!td.wasClicked()) return;
+        bumpActivity();
 
         SharedState snap;
         snapShared(snap);
@@ -1185,9 +1250,10 @@ void uiTouchTick() {
         // tapping a row toggles it; tapping elsewhere does nothing
         const auto& td = M5Dial.Touch.getDetail();
         if (!td.wasClicked()) return;
+        bumpActivity();
         int ty = td.y;
         for (int i = 0; i < PLAY_ROWS; ++i) {
-            int y = 68 + i * 30;
+            int y = 78 + i * 30;
             if (ty >= y - 14 && ty <= y + 14) {
                 if (i == PLAY_RANDOM) post(CMD_SET_RANDOM, -1);
                 else if (i == PLAY_REPEAT) post(CMD_SET_REPEAT, -1);

@@ -58,13 +58,14 @@ bool MpdBrowseList::_append(MpdItemKind k, const char* base,
 }
 
 // ---------------------------------------------------------------------
-// lsinfo response groups files with their tags into contiguous blocks:
-//   directory: Music/Artist
-//   file: Music/Artist/Album/track.flac
-//   AlbumArtist: ...
-//   Album: ...
-//   Title: ...
-//   playlist: name.m3u
+// A plain "lsinfo" response groups every file with its tag block
+// (AlbumArtist:/Album:/Title:/Genre:/... ~10+ lines per song), which blows
+// up the raw buffer and OOMs the no-PSRAM Dial heap on big directories.
+// The fetch below buffers only the entry lines (directory:/file:/playlist:)
+// and discards the per-file tags - the Files browser doesn't need them and
+// rows simply fall back to the file's basename.
+static const char* const kDirKeep[] = { "directory:", "file:", "playlist:" };
+
 bool MpdBrowseList::loadDir(MpdClient& c, const String& dir) {
     clear();
     char*  buf = nullptr;
@@ -76,7 +77,7 @@ bool MpdBrowseList::loadDir(MpdClient& c, const String& dir) {
         cmd += dir;
         cmd += "\"";
     }
-    if (!c.fetchLineList(cmd, &buf, &len)) return false;
+    if (!c.fetchLineList(cmd, &buf, &len, kDirKeep, 3)) return false;
 
     const char* p   = buf;
     const char* end = buf + len;
