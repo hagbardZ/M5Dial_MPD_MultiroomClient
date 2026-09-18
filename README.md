@@ -33,6 +33,14 @@ style), and reconnects automatically.
   screen other than now playing falls back to it automatically.  The
   file/library/playlist browsers use the longer `BROWSE_TIMEOUT_MS` so you
   have time to look around.
+- **Standby** — hold the knob for `STANDBY_PRESS_MS` and the dial sleeps
+  (screen + Wi-Fi off); wake by pressing the knob or turning the wheel.
+  Two low-power engines are selectable in `config.h`: *light sleep* for an
+  instant wake (~1 mA) or *deep sleep with an RTC-timer poll* (the chip
+  idles at ~7 µA, wakes itself every `STANDBY_POLL_MS` to glance at the
+  knob/wheel, and dozes again).  The knob/wheel sit on digital-only pins,
+  so deep sleep can never be *triggered* directly from them — the poll is
+  the trade-off that makes µA-class chip power possible without a wire.
 - **Queue view** — scroll the MPD queue, press to play an entry.
 - **Files browser** — walk the music directories (`lsinfo`), drill into
   folders, enqueue or play songs / folders / `.m3u` playlists.
@@ -63,6 +71,7 @@ None — it's an M5Dial. Just power it via USB-C.
 | Knob push (short)  | Play / pause                   | Open / enqueue / play         |
 | Knob push (2×)     | –                              | Play now / load & play (files, songs, playlists) |
 | Knob push (long)   | Open main menu                 | Back (up one level)           |
+| Knob push (very long, ≥ `STANDBY_PRESS_MS`) | Standby (sleep)     | Standby (sleep)               |
 | Touch              | Prev/next arrows; tap "playing" for play menu; tap the title for the queue; tap room name to switch rooms | Tap an entry to select / play |
 
 Navigating the browser: rotate to move, click to open a folder / artist /
@@ -104,6 +113,11 @@ Edit `include/config.h` before flashing:
 #define TIMEZONE_UTC_HOURS 2              // GMT offset (Germany: CEST=2, CET=1)
 #define MENU_TIMEOUT_MS    5000           // idle auto-return (menu/queue/play menu); 0 = off
 #define BROWSE_TIMEOUT_MS  15000          // idle auto-return while browsing files/library/playlists; 0 = off
+
+// --- Standby ---
+#define STANDBY_PRESS_MS  2000   // very-long knob hold → standby; 0 = off
+#define STANDBY_DEEP_POLL 1      // 1 = deep sleep + RTC-timer poll, 0 = light sleep (instant wake)
+#define STANDBY_POLL_MS   1000   // knob/wheel scan interval in deep-poll mode
 ```
 
 MPD must be listening on TCP 6600 on your network (`bind_to_address` in
@@ -123,6 +137,12 @@ of the now-playing screen (`MODE_INSTS`).
   if you ever rebase the font. Non-Latin scripts would need the bundled `efont`
   fonts.
 - The buzzer and IMU are not used in v1.
+- **Standby power** — the display, backlight expander and RFID stay powered
+  in both standby engines, so the board as a whole still draws a fraction of
+  a mA to a few mA on top of the chip.  The deep-poll engine only cuts the
+  *chip* to ~7 µA; long `STANDBY_POLL_MS` values save the most but make the
+  knob/wheel respond lazier (a tap shorter than the interval can be missed —
+  hold ~1 s to wake).
 - The M5Dial's ESP32-S3-FN8 has no PSRAM; the 240×240 UI frame buffer lives
   in internal RAM and the client caps RAM usage (compact directory listings,
   a capped playlist fetch, filtered `lsinfo` buffering) so large libraries

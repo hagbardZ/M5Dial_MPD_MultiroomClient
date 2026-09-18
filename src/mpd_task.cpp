@@ -18,6 +18,7 @@ static void selectInstance(int idx);
 // ---------------------------------------------------------------------
 SharedState gShared;
 QueueHandle_t gCmdQueue = nullptr;
+static TaskHandle_t s_mpdTask = nullptr;   // allow suspend during standby
 
 // ---------------------------------------------------------------------
 static MpdClient    s_mpd;
@@ -644,7 +645,19 @@ void startMpdTask() {
 
     s_mpd.begin(MPD_HOST, s_instances[s_curInst].port, MPD_PASSWORD);
     logFetchCap();
-    xTaskCreatePinnedToCore(mpdTask, "mpd", 8192, nullptr, 2, nullptr, 0);
+    xTaskCreatePinnedToCore(mpdTask, "mpd", 8192, nullptr, 2, &s_mpdTask, 0);
+}
+
+// ---------------------------------------------------------------------
+// Freeze / un-freeze the whole network task while the M5Dial is in
+// standby (light sleep).  Freezing before Wi-Fi is turned off guarantees
+// the task cannot re-enable Wi-Fi behind our back during the power-down.
+void mpdSetStandby(bool on) {
+    if (on) {
+        if (s_mpdTask) vTaskSuspend(s_mpdTask);
+    } else {
+        if (s_mpdTask) vTaskResume(s_mpdTask);
+    }
 }
 
 // ---------------------------------------------------------------------

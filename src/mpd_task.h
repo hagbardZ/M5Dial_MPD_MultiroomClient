@@ -6,6 +6,10 @@
 // reacts to idle events.  Writes into gShared, consumes gCmdQueue.
 void startMpdTask();
 
+// Freeze / un-freeze the network task for standby (light sleep).  When
+// entering standby, call mpdSetStandby(true) BEFORE disabling Wi-Fi.
+void mpdSetStandby(bool on);
+
 // ---- MPD instances (rooms) ------------------------------------------
 // One MPD per room, selectable from the UI menu.  The table comes from
 // config.h (MPD_INSTANCES).  The last choice is remembered across reboots
