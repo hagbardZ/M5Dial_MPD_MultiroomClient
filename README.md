@@ -30,7 +30,9 @@ style), and reconnects automatically.
 - **Main menu** — hold in the now-playing screen for a menu hub:
   Queue, Files, Library, Playlists, Back.
 - **Idle auto-return** — after `MENU_TIMEOUT_MS` without any input, every
-  screen other than now playing falls back to it automatically.
+  screen other than now playing falls back to it automatically.  The
+  file/library/playlist browsers use the longer `BROWSE_TIMEOUT_MS` so you
+  have time to look around.
 - **Queue view** — scroll the MPD queue, press to play an entry.
 - **Files browser** — walk the music directories (`lsinfo`), drill into
   folders, enqueue or play songs / folders / `.m3u` playlists.
@@ -100,7 +102,8 @@ Edit `include/config.h` before flashing:
 
 #define NTP_SERVER         "pool.ntp.org"  // NTP for the webradio wall clock
 #define TIMEZONE_UTC_HOURS 2              // GMT offset (Germany: CEST=2, CET=1)
-#define MENU_TIMEOUT_MS    5000           // idle auto-return to now playing; 0 = off
+#define MENU_TIMEOUT_MS    5000           // idle auto-return (menu/queue/play menu); 0 = off
+#define BROWSE_TIMEOUT_MS  15000          // idle auto-return while browsing files/library/playlists; 0 = off
 ```
 
 MPD must be listening on TCP 6600 on your network (`bind_to_address` in
@@ -112,9 +115,13 @@ of the now-playing screen (`MODE_INSTS`).
 
 ## Notes
 
-- The default fonts are the DejaVu/Latin sets bundled with M5GFX; German
-  umlauts render fine (DejaVu covers them). Non-Latin scripts would need the
-  bundled `efont` fonts.
+- The bundled M5GFX DejaVu fonts are ASCII-only (no umlauts), so the project
+  ships umlaut-capable variants in `src/fonts/` — `DejaVu12Lat1.h` /
+  `DejaVu18Lat1.h`. They keep the original ASCII glyphs byte-identical and add
+  German/Latin-1 glyphs (ÄÖÜäöüß, …, U+00A0–U+00FF), stored in LGFX's
+  run-length bitmap format. Regenerate with `/tmp/opencode/gen_umlaut_font.py`
+  if you ever rebase the font. Non-Latin scripts would need the bundled `efont`
+  fonts.
 - The buzzer and IMU are not used in v1.
 - The M5Dial's ESP32-S3-FN8 has no PSRAM; the 240×240 UI frame buffer lives
   in internal RAM and the client caps RAM usage (compact directory listings,
@@ -155,7 +162,8 @@ example include/config.h:
 // ---- UI timeout -------------------------------------------------------
 // After this many ms of no input (knob, button or touch) every screen
 // except the now-playing view falls back to now playing.  0 disables it.
-#define MENU_TIMEOUT_MS 5000
+#define MENU_TIMEOUT_MS    5000   // menu, queue, play menu, instances
+#define BROWSE_TIMEOUT_MS  15000  // files / library / playlists (longer, browse takes time)
 
 // ---- Wi-Fi -----------------------------------------------------------
 #define WIFI_SSID "YOUR_WIFI_SSID"

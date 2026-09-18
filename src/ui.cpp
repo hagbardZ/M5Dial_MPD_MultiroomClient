@@ -4,6 +4,11 @@
 
 #include <M5Dial.h>
 
+namespace lgfx {
+#include "fonts/DejaVu12Lat1.h"
+#include "fonts/DejaVu18Lat1.h"
+}
+
 #include "Browse.h"
 #include "Playlist.h"
 #include "app.h"
@@ -103,8 +108,8 @@ static uint16_t cBg, cRing, cTrack, cProgress, cText, cDim, cOk, cBad,
     cWarn, cSel, cHighlight;
 
 // fonts
-static const lgfx::IFont* s_fTitle = &fonts::DejaVu18;
-static const lgfx::IFont* s_fSmall = &fonts::DejaVu12;
+static const lgfx::IFont* s_fTitle = &lgfx::DejaVu18Lat1;
+static const lgfx::IFont* s_fSmall = &lgfx::DejaVu12Lat1;
 static const lgfx::IFont* s_fTime  = &fonts::Orbitron_Light_24;
 
 static uint32_t s_drawSig = 0;
@@ -840,14 +845,16 @@ void uiTick() {
 
     uint32_t now = millis();
 
-    // idle timeout: no input for MENU_TIMEOUT_MS -> back to now playing
-    if (s_mode != MODE_NOW && MENU_TIMEOUT_MS > 0 &&
-        now - s_lastInput >= MENU_TIMEOUT_MS) {
-        if (s_mode == MODE_BROWSE) s_depth = 0;
-        s_mode       = MODE_NOW;
-        s_pend.armed = false;
-        syncModes();
-        s_dirty      = true;
+    // idle timeout: no input for the per-mode timeout -> back to now playing
+    if (s_mode != MODE_NOW) {
+        uint32_t to = (s_mode == MODE_BROWSE) ? BROWSE_TIMEOUT_MS : MENU_TIMEOUT_MS;
+        if (to > 0 && now - s_lastInput >= to) {
+            if (s_mode == MODE_BROWSE) s_depth = 0;
+            s_mode       = MODE_NOW;
+            s_pend.armed = false;
+            syncModes();
+            s_dirty      = true;
+        }
     }
 
     static uint32_t lastDraw = 0;
@@ -902,11 +909,16 @@ void uiEncoder(int delta) {
         }
     } else if (s_mode == MODE_MENU) {
         s_menuSel += delta;
-        if (s_menuSel < 0) s_menuSel = 0;
-        if (s_menuSel > 4) s_menuSel = 4;
+        if (s_menuSel < 0) s_menuSel = 4;   // wrap: top -> bottom
+        if (s_menuSel > 4) s_menuSel = 0;   // wrap: bottom -> top
         s_dirty = true;
     } else if (s_mode == MODE_INSTS) {
-        s_instSel += delta;
+        int cnt = mpdInstanceCount();
+        if (cnt > 0) {
+            s_instSel += delta;
+            if (s_instSel < 0) s_instSel = cnt - 1;
+            if (s_instSel >= cnt) s_instSel = 0;
+        }
         s_dirty = true;
     } else if (s_mode == MODE_PLAYMENU) {
         s_playSel += delta;
@@ -915,8 +927,16 @@ void uiEncoder(int delta) {
         s_dirty = true;
     } else {
         s_pend.armed = false;   // scrolling cancels a pending decide
-        int& sel     = s_mode == MODE_QUEUE ? s_songSel : topFrame().sel;
+        SharedState snap;
+        snapShared(snap);
+        int& sel = s_mode == MODE_QUEUE ? s_songSel : topFrame().sel;
+        int  cnt = s_mode == MODE_QUEUE ? (int)snap.status.plength
+                                        : (int)snap.brCount;
         sel += delta;
+        if (cnt > 0) {
+            if (sel < 0) sel = cnt - 1;   // wrap: top -> bottom
+            if (sel >= cnt) sel = 0;      // wrap: bottom -> top
+        }
         if (s_mode == MODE_QUEUE) {
             xSemaphoreTake(gShared.mux, portMAX_DELAY);
             gShared.plSel = s_songSel;
