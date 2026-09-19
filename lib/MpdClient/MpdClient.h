@@ -94,6 +94,7 @@ public:
     bool   playPos(int pos);
     bool   addUri(const String& uri);      // "add <uri>"
     bool   loadPlaylist(const String& name);  // "load <name>"
+    bool   updateDb(const String& dir);    // "update <dir>" ("" = whole DB)
     bool   setRandom(bool on);
     bool   setRepeat(bool on);
     bool   setSingle(bool on);

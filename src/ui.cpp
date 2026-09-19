@@ -1080,13 +1080,10 @@ static void browseDecide(uint32_t idx, bool dbl) {
     if (t == Fb::PLISTS) {
         MpdBrowseItem it;
         if (!browseCell(idx, it)) return;
-        if (dbl) {
-            actRequest(it.name.c_str());
-            post(CMD_ACT, ACT_LOAD_PL);
-            showToast(("playing: " + it.name).c_str(), cWarn);
-        } else {
-            pushFrame(Fb::PLS_VIEW, it.name);
-        }
+        actRequest(it.name.c_str());
+        post(CMD_CLEAR);                 // drop the recent queue first
+        post(CMD_ACT, ACT_LOAD_PL);      // then load + play the playlist
+        showToast(("playing: " + it.name).c_str(), cWarn);
         s_dirty = true;
         return;
     }
@@ -1240,7 +1237,21 @@ void uiTouchTick() {
 
         SharedState snap;
         snapShared(snap);
-        if (!snap.brLoaded || snap.brCount == 0) return;
+        if (!snap.brLoaded) return;
+
+        // tap on the footer counter below the last row → rescan the current
+        // folder in the MPD database (whole DB while at the root)
+        if (td.y >= 197 && topFrame().type == Fb::DIR) {
+            String uri = topFrame().arg;
+            actRequest(uri.c_str());
+            post(CMD_UPDATE_DB);
+            String label = uri.length() ? uri : String("/");
+            showToast(("updating: " + label).c_str(), cWarn);
+            s_dirty = true;
+            return;
+        }
+
+        if (snap.brCount == 0) return;
 
         BFrame& f = topFrame();
         int&   sel = f.sel;

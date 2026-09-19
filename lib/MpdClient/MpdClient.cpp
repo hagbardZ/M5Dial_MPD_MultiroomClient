@@ -401,3 +401,9 @@ bool MpdClient::addUri(const String& uri) {
 bool MpdClient::loadPlaylist(const String& name) {
     return sendCommand("load " + _q(name));
 }
+
+// ---------------------------------------------------------------------
+// "update" rescans the given directory ("" scans the whole music root).
+bool MpdClient::updateDb(const String& dir) {
+    return sendCommand("update " + _q(dir));
+}

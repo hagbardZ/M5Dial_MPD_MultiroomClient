@@ -43,13 +43,16 @@ style), and reconnects automatically.
   the trade-off that makes µA-class chip power possible without a wire.
 - **Queue view** — scroll the MPD queue, press to play an entry.
 - **Files browser** — walk the music directories (`lsinfo`), drill into
-  folders, enqueue or play songs / folders / `.m3u` playlists.
+  folders, enqueue or play songs / folders / `.m3u` playlists.  Tapping the
+  row counter at the bottom rescans the current folder in the MPD database
+  (whole database while at the root), like the equivalent action in M.A.L.P.
 - **Library browser** — artists → albums → songs via the MPD tag database
   (`list` / `find`, with albumartist + artist fallback).
 - **Playlist browser** — list stored playlists, preview their songs, enqueue
-  or play songs, or double-press a playlist to *load & play* it.
-- **Click semantics** — one click = gentle action (enqueue / open), two quick
-  clicks = stronger action (play now / load & play). Hold = back.
+  or play songs, or press a playlist to clear the queue and *load & play* it.
+- **Click semantics** — one click = gentle action (enqueue / open / in a
+  playlist: clear the queue + load & play), two quick clicks = play now for
+  files, songs and folders. Hold = back.
 - **Auto-reconnect** — Wi-Fi and MPD both retry with back-off; the client
   uses MPD's `idle` command (incl. `database` / `stored_playlist`) so the UI
   updates the moment something changes.
@@ -72,11 +75,12 @@ None — it's an M5Dial. Just power it via USB-C.
 | Knob push (2×)     | –                              | Play now / load & play (files, songs, playlists) |
 | Knob push (long)   | Open main menu                 | Back (up one level)           |
 | Knob push (very long, ≥ `STANDBY_PRESS_MS`) | Standby (sleep)     | Standby (sleep)               |
-| Touch              | Prev/next arrows; tap "playing" for play menu; tap the title for the queue; tap room name to switch rooms | Tap an entry to select / play |
+| Touch              | Prev/next arrows; tap "playing" for play menu; tap the title for the queue; tap room name to switch rooms | Tap an entry to select / play; tap the bottom counter in the file browser to rescan the folder |
 
 Navigating the browser: rotate to move, click to open a folder / artist /
-album / playlist preview, single-click a song or file to add it to the queue,
-double-click it to play it right away. Hold anywhere in a browser to go back
+album, single-click a playlist to clear the queue and play it, single-click a
+song or file to add it to the queue, double-click it to play it right away.
+Hold anywhere in a browser to go back
 one level (and eventually back to the menu; hold in the menu goes back to the
 now-playing screen).
 

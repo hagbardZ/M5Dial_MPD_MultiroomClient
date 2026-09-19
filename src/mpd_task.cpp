@@ -253,6 +253,16 @@ static void execCommand(const MpdCommand& c) {
             s_plReloadReq = true;
             refreshShared();
             break;
+        case CMD_UPDATE_DB: {
+            String p;
+            xSemaphoreTake(gShared.mux, portMAX_DELAY);
+            p = gShared.actArg;
+            xSemaphoreGive(gShared.mux);
+            if (s_mpd.updateDb(p))
+                Serial.printf("[db] update requested: %s\n",
+                              p.length() ? p.c_str() : "/");
+            break;
+        }
         case CMD_BROWSE: {
             xSemaphoreTake(gShared.mux, portMAX_DELAY);
             uint8_t  t = gShared.brReqType;
