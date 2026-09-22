@@ -40,15 +40,26 @@ enum Mode : uint8_t {
     MODE_BROWSE,
     MODE_INSTS,
     MODE_PLAYMENU,
+    MODE_KNX,
 };
 
-// play-menu rows
+// play-menu rows (the KNX device + submenu rows only exist with KNX enabled)
 enum PlayRow : uint8_t {
-    PLAY_RANDOM = 0, PLAY_REPEAT, PLAY_AMP, PLAY_AMP2, PLAY_ROWS
+    PLAY_RANDOM = 0, PLAY_REPEAT,
+#if KNX_ENABLE
+    PLAY_AMP, PLAY_AMP2, PLAY_KNX,
+#endif
+    PLAY_ROWS
 };
+
+static int playRowCount() { return (int)PLAY_ROWS; }
 
 static int playDeviceRow(int i) {
-    return (i == PLAY_AMP) ? 0 : (i == PLAY_AMP2) ? 1 : -1;
+#if KNX_ENABLE
+    return (i >= PLAY_AMP && i < PLAY_KNX) ? (i - PLAY_AMP) : -1;
+#else
+    return -1;
+#endif
 }
 
 // ---------------------------------------------------------------------
@@ -77,6 +88,7 @@ static int   s_songSel  = 0;             // selection in the queue view
 static int   s_menuSel  = 0;             // selection in the main menu
 static int   s_instSel  = 0;             // selection in the instance picker
 static int   s_playSel  = 0;             // selection in the play menu
+static int   s_knxSel   = 0;             // selection in the KNX menu
 static bool  s_dirty    = true;
 static Mode  s_lastMode = Mode(0xFF);    // force first draw
 static int   s_encAcc   = 0;             // encoder jitter accumulator (NOW mode)
@@ -594,7 +606,7 @@ static void drawPlayMenuView(const SharedState& snap) {
     setFont(s_fSmall);
     drawText(CX, 34, cDim, "PLAY");
 
-    for (int i = 0; i < PLAY_ROWS; ++i) {
+    for (int i = 0; i < playRowCount(); ++i) {
         int  y   = 60 + i * 30;
         bool sel = (i == s_playSel);
         if (sel) spr.fillRoundRect(14, y - 12, 212, 26, 8, cSel);
@@ -608,20 +620,58 @@ static void drawPlayMenuView(const SharedState& snap) {
         } else if (i == PLAY_REPEAT) {
             text = (snap.status.single ? "[x] " : "[ ] ") + String("Repeat song");
             if (snap.status.single) col = cOk;
-        } else if ((i == PLAY_AMP) || (i == PLAY_AMP2)) {
+#if KNX_ENABLE
+        } else if (i == PLAY_KNX) {
+            text = String("KNX");
+            col  = cHighlight;
+#endif
+        } else {
             int      dev = playDeviceRow(i);
             bool     on  = knxAmpIsOn(dev);
             bool     valid = knxAmpIsValid(dev);
-            const char* devName = (dev == 0) ? KNX_DEVICE1_NAME
-                                             : KNX_DEVICE2_NAME;
             text = String(valid ? (on ? "[x] " : "[ ] ") : "[?] ") +
-                   String(devName);
+                   String(knxDeviceName(dev));
             if (!valid) col = cWarn;
             else if (on) col = cOk;
         }
         if (sel) col = cText;
         drawText(CX, y, col, text.c_str());
     }
+
+    String foot = "hold: back";
+    drawText(CX, 218, cDim, foot.c_str());
+    drawStatusDots(snap.wifi, snap.mpd, true);
+}
+
+// ---------------------------------------------------------------------
+// KNX submenu: one row per KNX-menu device (config.h devices from
+// KNX_PLAYMENU_DEVICES onward).  Reached via the "KNX" entry in the play
+// menu.
+static void drawKnxMenuView(const SharedState& snap) {
+    spr.fillScreen(cBg);
+    setFont(s_fSmall);
+    drawText(CX, 34, cDim, "KNX");
+
+    int base = knxMenuDeviceBase();
+    int cnt  = knxMenuDeviceCount();
+    for (int r = 0; r < cnt; ++r) {
+        int  dev = base + r;
+        int  y   = 60 + r * 30;
+        bool sel = (r == s_knxSel);
+        if (sel) spr.fillRoundRect(14, y - 12, 212, 26, 8, cSel);
+
+        bool on  = knxAmpIsOn(dev);
+        bool valid = knxAmpIsValid(dev);
+        uint16_t col = cDim;
+        String text = String(valid ? (on ? "[x] " : "[ ] ") : "[?] ") +
+                      String(knxDeviceName(dev));
+        if (!valid) col = cWarn;
+        else if (on) col = cOk;
+        if (sel) col = cText;
+        drawText(CX, y, col, text.c_str());
+    }
+
+    if (cnt == 0) drawText(CX, 96, cDim, "no devices");
 
     String foot = "hold: back";
     drawText(CX, 218, cDim, foot.c_str());
@@ -879,8 +929,11 @@ void uiTick() {
     bool timeTick = (now - lastDraw >= 120);
 
     uint32_t      fsel = topSelSig();
-    uint32_t      amp  = (knxAmpIsValid(0) ? 16u : 0u) + (knxAmpIsOn(0) ? 64u : 0u) +
-                        (knxAmpIsValid(1) ? 32u : 0u) + (knxAmpIsOn(1) ? 128u : 0u);
+    uint32_t      amp  = 0;
+    for (int i = 0; i < knxDeviceCount(); ++i) {
+        if (knxAmpIsValid(i)) amp |= (1u << (4 * i));
+        if (knxAmpIsOn(i))    amp |= (1u << (4 * i + 1));
+    }
     uint32_t      sig  = snap.statusGen + snap.songGen * 7u +
                         snap.plGen * 13u + snap.brGen * 17u +
                         (snap.wifi ? 1u : 0u) + (snap.mpd ? 2u : 0u) +
@@ -891,7 +944,8 @@ void uiTick() {
                         (uint32_t)s_menuSel * 19u +
                         (uint32_t)s_instSel * 23u +
                         (uint32_t)snap.curInst * 29u +
-                        (uint32_t)s_playSel * 31u;
+                        (uint32_t)s_playSel * 31u +
+                        (uint32_t)s_knxSel * 37u;
 
     if (!timeTick && !s_dirty && sig == s_drawSig && !marquee) return;
     s_drawSig = sig;
@@ -910,6 +964,8 @@ void uiTick() {
         drawInstancesView(snap);
     else if (s_mode == MODE_PLAYMENU)
         drawPlayMenuView(snap);
+    else if (s_mode == MODE_KNX)
+        drawKnxMenuView(snap);
     else
         drawBrowseView(snap);
     spr.pushSprite(0, 0);
@@ -943,8 +999,16 @@ void uiEncoder(int delta) {
         s_dirty = true;
     } else if (s_mode == MODE_PLAYMENU) {
         s_playSel += delta;
-        if (s_playSel < 0) s_playSel = PLAY_ROWS - 1;
-        if (s_playSel > PLAY_ROWS - 1) s_playSel = 0;
+        if (s_playSel < 0) s_playSel = playRowCount() - 1;
+        if (s_playSel > playRowCount() - 1) s_playSel = 0;
+        s_dirty = true;
+    } else if (s_mode == MODE_KNX) {
+        int cnt = knxMenuDeviceCount();
+        if (cnt > 0) {
+            s_knxSel += delta;
+            if (s_knxSel < 0) s_knxSel = cnt - 1;
+            if (s_knxSel >= cnt) s_knxSel = 0;
+        }
         s_dirty = true;
     } else {
         s_pend.armed = false;   // scrolling cancels a pending decide
@@ -1045,10 +1109,25 @@ void uiButtonClick() {
     case MODE_PLAYMENU:
         if (s_playSel == PLAY_RANDOM) post(CMD_SET_RANDOM, -1);
         else if (s_playSel == PLAY_REPEAT) post(CMD_SET_REPEAT, -1);
-        else if (playDeviceRow(s_playSel) >= 0)
+#if KNX_ENABLE
+        else if (s_playSel == PLAY_KNX) {
+            s_mode   = MODE_KNX;
+            s_knxSel = 0;
+            s_dirty  = true;
+        } else if (playDeviceRow(s_playSel) >= 0)
             post(CMD_KNX_TOGGLE, playDeviceRow(s_playSel));
+#endif
         s_dirty = true;
         break;
+
+    case MODE_KNX: {
+        int dev = knxMenuDeviceBase() + s_knxSel;
+        if (s_knxSel >= 0 && s_knxSel < knxMenuDeviceCount() &&
+            dev < knxDeviceCount())
+            post(CMD_KNX_TOGGLE, dev);
+        s_dirty = true;
+        break;
+    }
 
     case MODE_QUEUE: {
         const MpdPlaylist* pl = mpdPlaylistHandle();
@@ -1189,6 +1268,9 @@ void uiButtonHold() {
     } else if (s_mode == MODE_PLAYMENU) {
         s_mode = MODE_NOW;
         syncModes();
+    } else if (s_mode == MODE_KNX) {
+        s_mode = MODE_PLAYMENU;
+        syncModes();
     } else {  // MODE_BROWSE
         popFrame();
     }
@@ -1304,20 +1386,35 @@ for (int i = 0; i < kMenuCount; ++i) {
             s_dirty = true;
             break;
         }
-    } else if (s_mode == MODE_PLAYMENU) {
+    } else if (s_mode == MODE_PLAYMENU || s_mode == MODE_KNX) {
         // tapping a row toggles it; tapping elsewhere does nothing
         const auto& td = M5Dial.Touch.getDetail();
         if (!td.wasClicked()) return;
         bumpActivity();
-        int ty = td.y;
-        for (int i = 0; i < PLAY_ROWS; ++i) {
-            int y = 78 + i * 30;
-            if (ty >= y - 14 && ty <= y + 14) {
+        if (s_mode == MODE_PLAYMENU) {
+            for (int i = 0; i < playRowCount(); ++i) {
+                int y = 60 + i * 30;
+                if (td.y < y - 14 || td.y > y + 14) continue;
                 if (i == PLAY_RANDOM) post(CMD_SET_RANDOM, -1);
                 else if (i == PLAY_REPEAT) post(CMD_SET_REPEAT, -1);
-                else if (playDeviceRow(i) >= 0)
+#if KNX_ENABLE
+                else if (i == PLAY_KNX) {
+                    s_mode   = MODE_KNX;
+                    s_knxSel = 0;
+                } else if (playDeviceRow(i) >= 0)
                     post(CMD_KNX_TOGGLE, playDeviceRow(i));
+#endif
                 s_dirty = true;
+                break;
+            }
+        } else {
+            for (int i = 0; i < knxMenuDeviceCount(); ++i) {
+                int y = 60 + i * 30;
+                if (td.y < y - 14 || td.y > y + 14) continue;
+                int dev = knxMenuDeviceBase() + i;
+                s_knxSel = i;
+                post(CMD_KNX_TOGGLE, dev);
+                s_dirty  = true;
                 break;
             }
         }

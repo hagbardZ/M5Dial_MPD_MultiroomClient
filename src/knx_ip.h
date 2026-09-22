@@ -20,6 +20,14 @@ void knxReset();                 // tear the tunnel down and forget the state
 // Number of KNX devices configured (from config.h).
 int knxDeviceCount();
 
+// Devices 0..knxPlayDevCount()-1 appear directly in the play menu; the
+// devices from knxMenuDeviceBase() on are shown in the KNX submenu.
+int knxMenuDeviceBase();
+int knxMenuDeviceCount();
+
+// Display name of device `dev` (from KNX_DEVICEn_NAME in config.h).
+const char* knxDeviceName(int dev);
+
 // Request an On/Off toggle of device `dev` (0-based index).
 void knxToggle(int dev);
 

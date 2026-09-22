@@ -32,17 +32,23 @@ style), and reconnects automatically.
 - **Main menu** — hold in the now-playing screen for a menu hub:
   Queue, Files, Library, Playlists, Clear playlist, Back.
 - **Play menu** — tap the "playing" text in the now-playing screen: toggle
-  random and repeat-current, and (with KNX enabled) each configured KNX
-  device row shows its live bus state as `[x]` / `[ ]` / `[?]` and toggles
-  its On/Off group on a knob click or tap.
+  random and repeat-current, plus (with KNX enabled) the first
+  `KNX_PLAYMENU_DEVICES` KNX devices as one-tap rows.  Every device row
+  shows its live bus state as `[x]` / `[ ]` / `[?]` and toggles its On/Off
+  group on a knob click or tap.  A final **KNX** row opens the **KNX
+  submenu**, which lists the remaining configured KNX devices (e.g.
+  Amplifier 3/4/5 here) in the same style — hold to go back to the play
+  menu, or hold again for now-playing.  With `KNX_ENABLE 0` the play menu
+  is just random / repeat.
 - **KNX (KNXnet/IP tunneling)** — optional, off by default; enable with
   `KNX_ENABLE`.  A minimal UDP tunneling client that talks directly to a KNX
   IP interface (MDT / Gira / TP-UART gateway, default `192.168.23.35:3671`)
   without ETS, and toggles the On/Off (DPT 1.001) group addresses of up to
-  two devices — typically amplifiers — from the play menu.  Each device has
-  a *toggle* group (write `0`/`1`) and a *status* group (read back; shown as
-  `[x]`/`[ ]`/`[?]` until it has reported once).  The tunnel sends a
-  connection-state request every 30 s to keep the gateway lease alive,
+  five devices — typically amplifiers — split between the play menu (the
+  first `KNX_PLAYMENU_DEVICES`) and the KNX submenu (the rest).  Each device
+  has a *toggle* group (write `0`/`1`) and a *status* group (read back;
+  shown as `[x]`/`[ ]`/`[?]` until it has reported once).  The tunnel sends
+  a connection-state request every 30 s to keep the gateway lease alive,
   reconnects with retry if the single tunnelling slot is busy, and never
   blocks the UI.
 - **Idle auto-return** — after `MENU_TIMEOUT_MS` without any input, every
@@ -96,14 +102,15 @@ None — it's an M5Dial. Just power it via USB-C.
 | Knob push (2×)     | –                              | Play now / load & play (files, songs, playlists) |
 | Knob push (long)   | Open main menu                 | Back (up one level)           |
 | Knob push (very long, ≥ `STANDBY_PRESS_MS`) | Standby (sleep)     | Standby (sleep)               |
-| Touch              | Prev/next arrows; tap "playing" for the play menu (random / repeat / KNX devices); tap the title for the queue; tap room name to switch rooms | Tap an entry to select / play; tap the bottom counter in the file browser to rescan the folder |
+| Touch              | Prev/next arrows; tap "playing" for the play menu (random / repeat / KNX devices / KNX submenu); tap the title for the queue; tap room name to switch rooms | Tap an entry to select / play; tap a row in the play/KNX menu to toggle it; tap the bottom counter in the file browser to rescan the folder |
 
 Navigating the browser: rotate to move, click to open a folder / artist /
 album, single-click a playlist to clear the queue and play it, single-click a
 song or file to add it to the queue, double-click it to play it right away.
 Hold anywhere in a browser to go back
 one level (and eventually back to the menu; hold in the menu goes back to the
-now-playing screen).
+now-playing screen).  In the play menu and KNX submenu, hold to go back one
+level too (KNX submenu → play menu → now-playing).
 
 ## Build & flash
 
@@ -148,7 +155,9 @@ Edit `include/config.h` before flashing:
 #define KNX_DEVICE1_STATUS_MAIN   2    // status group, read back on boot
 #define KNX_DEVICE1_STATUS_MIDDLE 1
 #define KNX_DEVICE1_STATUS_SUB    0
-// ... and the analogous KNX_DEVICE2_* for a second amplifier.
+// ... and the analogous KNX_DEVICE2_* .. KNX_DEVICE5_*  for the other
+//     devices (2, 4, 5 sit in the KNX submenu via KNX_PLAYMENU_DEVICES).
+#define KNX_PLAYMENU_DEVICES 2         // # of devices pinned to the play menu
 
 #define NTP_SERVER         "pool.ntp.org"  // NTP for the webradio wall clock
 #define TIMEZONE_UTC_HOURS 2              // GMT offset (Germany: CEST=2, CET=1)
@@ -185,7 +194,7 @@ instance automatically after a few failures.
   *write* to the toggle group, then the device's own status group echoes the
   new state back (`[x]`/`[ ]` updates) — the two addresses just need to be
   wired in ETS as *On/Off* (DPT 1.001).  Give the Dial a dedicated source
-  address (`KNX_MY_ADDRESS`) per free KNX interface slot; two devices each
+  address (`KNX_MY_ADDRESS`) per free KNX interface slot; devices each
   need their own free tunnelling slot, and ETS/monitoring tools claiming the
   slot show up as a refused connection.
 - The buzzer and IMU are not used in v1.
@@ -265,17 +274,20 @@ example include/config.h:
     { "AllRooms", 6607 }
 
 // ---- KNX (optional) ---------------------------------------------------
-// KNXnet/IP tunnelling client: toggles On/Off group addresses of up to two
-// devices (e.g. amplifiers) from the play menu.  Set KNX_ENABLE 0 to leave
-// it out (the play menu then only shows random + repeat).
+// KNXnet/IP tunnelling client: toggles On/Off group addresses of up to five
+// devices (e.g. amplifiers).  The first KNX_PLAYMENU_DEVICES devices appear
+// as one-tap rows in the play menu; the rest live in the KNX submenu.  Set
+// KNX_ENABLE 0 to leave it out (the play menu then only shows random +
+// repeat).
 #define KNX_ENABLE     1                       // 0 = off
 #define KNX_HOST       "192.168.23.35"         // tunnelling interface (MDT/Gira/TP-UART)
 #define KNX_PORT       3671
 #define KNX_LOCAL_PORT 3672                    // local UDP source port (0 = auto)
 #define KNX_MY_ADDRESS 0xFFFA                  // own source address (per device)
 #define KNX_DEBUG      1                       // 1 = verbose serial log
+#define KNX_PLAYMENU_DEVICES 2                 // # pinned to the play menu
 
-// Device 1 (amplifier 1): toggle + status group (2/1/1 and 2/1/0).
+// Device 1 (play menu): toggle + status group (2/1/1 and 2/1/0).
 #define KNX_DEVICE1_NAME "Amplifier 1"
 #define KNX_DEVICE1_TOGGLE_MAIN   2
 #define KNX_DEVICE1_TOGGLE_MIDDLE 1
@@ -284,7 +296,7 @@ example include/config.h:
 #define KNX_DEVICE1_STATUS_MIDDLE 1
 #define KNX_DEVICE1_STATUS_SUB    0
 
-// Device 2 (amplifier 2): toggle + status group (2/0/0 and 2/0/1).
+// Device 2 (play menu): toggle + status group (2/0/0 and 2/0/1).
 #define KNX_DEVICE2_NAME "Amplifier 2"
 #define KNX_DEVICE2_TOGGLE_MAIN   2
 #define KNX_DEVICE2_TOGGLE_MIDDLE 0
@@ -292,6 +304,18 @@ example include/config.h:
 #define KNX_DEVICE2_STATUS_MAIN   2
 #define KNX_DEVICE2_STATUS_MIDDLE 0
 #define KNX_DEVICE2_STATUS_SUB    1
+
+// Devices 3..5 (KNX submenu): same pattern, e.g. amplifier 3 uses 2/0/2 +
+// 2/0/3, amplifier 4 uses 2/0/4 + 2/0/5, amplifier 5 uses 2/0/6 + 2/0/7 —
+// adjust the group addresses to your bus.
+#define KNX_DEVICE3_NAME "Amplifier 3"
+#define KNX_DEVICE3_TOGGLE_MAIN   2
+#define KNX_DEVICE3_TOGGLE_MIDDLE 0
+#define KNX_DEVICE3_TOGGLE_SUB    2
+#define KNX_DEVICE3_STATUS_MAIN   2
+#define KNX_DEVICE3_STATUS_MIDDLE 0
+#define KNX_DEVICE3_STATUS_SUB    3
+// ... KNX_DEVICE4_* / KNX_DEVICE5_* analogous
 ```
 
 

@@ -52,6 +52,24 @@ static const DevCfg kDevs[] = {
          KNX_DEVICE2_STATUS_SUB),
       KNX_DEVICE2_TOGGLE_MIDDLE, KNX_DEVICE2_TOGGLE_SUB,
       KNX_DEVICE2_STATUS_MIDDLE, KNX_DEVICE2_STATUS_SUB },
+    { ga(KNX_DEVICE3_TOGGLE_MAIN, KNX_DEVICE3_TOGGLE_MIDDLE,
+         KNX_DEVICE3_TOGGLE_SUB),
+      ga(KNX_DEVICE3_STATUS_MAIN, KNX_DEVICE3_STATUS_MIDDLE,
+         KNX_DEVICE3_STATUS_SUB),
+      KNX_DEVICE3_TOGGLE_MIDDLE, KNX_DEVICE3_TOGGLE_SUB,
+      KNX_DEVICE3_STATUS_MIDDLE, KNX_DEVICE3_STATUS_SUB },
+    { ga(KNX_DEVICE4_TOGGLE_MAIN, KNX_DEVICE4_TOGGLE_MIDDLE,
+         KNX_DEVICE4_TOGGLE_SUB),
+      ga(KNX_DEVICE4_STATUS_MAIN, KNX_DEVICE4_STATUS_MIDDLE,
+         KNX_DEVICE4_STATUS_SUB),
+      KNX_DEVICE4_TOGGLE_MIDDLE, KNX_DEVICE4_TOGGLE_SUB,
+      KNX_DEVICE4_STATUS_MIDDLE, KNX_DEVICE4_STATUS_SUB },
+    { ga(KNX_DEVICE5_TOGGLE_MAIN, KNX_DEVICE5_TOGGLE_MIDDLE,
+         KNX_DEVICE5_TOGGLE_SUB),
+      ga(KNX_DEVICE5_STATUS_MAIN, KNX_DEVICE5_STATUS_MIDDLE,
+         KNX_DEVICE5_STATUS_SUB),
+      KNX_DEVICE5_TOGGLE_MIDDLE, KNX_DEVICE5_TOGGLE_SUB,
+      KNX_DEVICE5_STATUS_MIDDLE, KNX_DEVICE5_STATUS_SUB },
 };
 static const int kDevCount = (int)(sizeof kDevs / sizeof kDevs[0]);
 
@@ -113,6 +131,26 @@ bool knxAmpIsValid(int dev) {
     return v;
 }
 int knxDeviceCount() { return kDevCount; }
+
+const char* knxDeviceName(int dev) {
+    switch (dev) {
+        case 0: return KNX_DEVICE1_NAME;
+        case 1: return KNX_DEVICE2_NAME;
+        case 2: return KNX_DEVICE3_NAME;
+        case 3: return KNX_DEVICE4_NAME;
+        case 4: return KNX_DEVICE5_NAME;
+        default: return "";
+    }
+}
+
+// Devices 0..knxPlayDevCount()-1 are pinned to the play menu; the rest are
+// listed in the KNX submenu.
+static int knxPlayDevCount() {
+    return (KNX_PLAYMENU_DEVICES < kDevCount) ? KNX_PLAYMENU_DEVICES
+                                              : kDevCount;
+}
+int knxMenuDeviceBase() { return knxPlayDevCount(); }
+int knxMenuDeviceCount() { return kDevCount - knxPlayDevCount(); }
 
 // ---------------------------------------------------------------------
 static void sendPkt(const uint8_t* p, size_t n) {
@@ -466,5 +504,8 @@ void knxToggle(int) {}
 bool knxAmpIsOn(int) { return false; }
 bool knxAmpIsValid(int) { return false; }
 int knxDeviceCount() { return 0; }
+const char* knxDeviceName(int) { return ""; }
+int knxMenuDeviceBase() { return 0; }
+int knxMenuDeviceCount() { return 0; }
 
 #endif
