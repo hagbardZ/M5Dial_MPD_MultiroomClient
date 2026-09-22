@@ -140,8 +140,12 @@ Edit `include/config.h` before flashing:
 #define KNX_MY_ADDRESS   0xFFFA           // own source address, fresh per device
 #define KNX_DEBUG        1                // 1 = verbose serial log
 #define KNX_DEVICE1_NAME "Amplifier 1"
-#define KNX_DEVICE1_TOGGLE { 2, 1, 1 }    // toggle On/Off group address (main, middle, sub)
-#define KNX_DEVICE1_STATUS { 2, 1, 0 }    // status group, read back on boot
+#define KNX_DEVICE1_TOGGLE_MAIN   2    // toggle On/Off group address
+#define KNX_DEVICE1_TOGGLE_MIDDLE 1    // (main, middle, sub)
+#define KNX_DEVICE1_TOGGLE_SUB    1
+#define KNX_DEVICE1_STATUS_MAIN   2    // status group, read back on boot
+#define KNX_DEVICE1_STATUS_MIDDLE 1
+#define KNX_DEVICE1_STATUS_SUB    0
 // ... and the analogous KNX_DEVICE2_* for a second amplifier.
 
 #define NTP_SERVER         "pool.ntp.org"  // NTP for the webradio wall clock
@@ -271,13 +275,21 @@ example include/config.h:
 
 // Device 1 (amplifier 1): toggle + status group (2/1/1 and 2/1/0).
 #define KNX_DEVICE1_NAME "Amplifier 1"
-#define KNX_DEVICE1_TOGGLE { 2, 1, 1 }
-#define KNX_DEVICE1_STATUS { 2, 1, 0 }
+#define KNX_DEVICE1_TOGGLE_MAIN   2
+#define KNX_DEVICE1_TOGGLE_MIDDLE 1
+#define KNX_DEVICE1_TOGGLE_SUB    1
+#define KNX_DEVICE1_STATUS_MAIN   2
+#define KNX_DEVICE1_STATUS_MIDDLE 1
+#define KNX_DEVICE1_STATUS_SUB    0
 
 // Device 2 (amplifier 2): toggle + status group (2/0/0 and 2/0/1).
 #define KNX_DEVICE2_NAME "Amplifier 2"
-#define KNX_DEVICE2_TOGGLE { 2, 0, 0 }
-#define KNX_DEVICE2_STATUS { 2, 0, 1 }
+#define KNX_DEVICE2_TOGGLE_MAIN   2
+#define KNX_DEVICE2_TOGGLE_MIDDLE 0
+#define KNX_DEVICE2_TOGGLE_SUB    0
+#define KNX_DEVICE2_STATUS_MAIN   2
+#define KNX_DEVICE2_STATUS_MIDDLE 0
+#define KNX_DEVICE2_STATUS_SUB    1
 ```
 
 
