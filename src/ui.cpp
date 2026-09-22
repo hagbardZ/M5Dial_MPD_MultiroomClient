@@ -411,7 +411,10 @@ static void drawNowView(const SharedState& snap) {
 
     float frac = 0.0f;
     if (st.duration > 0) frac = (float)showEl / (float)st.duration;
-    drawProgressRing(frac, cProgress, cTrack);
+    // No Wi-Fi: show the whole ring in red (frac 0 would leave an empty
+    // grey track and hide the warning colour).
+    drawProgressRing(snap.wifi ? frac : 1.0f, snap.wifi ? cProgress : cBad,
+                     cTrack);
 
     // ---- time (top) ------------------------------------------------
     // Streams have no meaningful play time, so show the NTP wall clock
@@ -590,10 +593,9 @@ static void drawPlayMenuView(const SharedState& snap) {
     spr.fillScreen(cBg);
     setFont(s_fSmall);
     drawText(CX, 34, cDim, "PLAY");
-    drawText(CX, 54, cDim, "tap to toggle");
 
     for (int i = 0; i < PLAY_ROWS; ++i) {
-        int  y   = 78 + i * 30;
+        int  y   = 60 + i * 30;
         bool sel = (i == s_playSel);
         if (sel) spr.fillRoundRect(14, y - 12, 212, 26, 8, cSel);
 

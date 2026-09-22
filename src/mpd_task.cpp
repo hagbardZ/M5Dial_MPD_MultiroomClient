@@ -563,6 +563,8 @@ static void mpdTask(void*) {
                 vTaskDelay(pdMS_TO_TICKS(1000));
                 continue;
             }
+        } else {
+            setWifi(true);   // auto-reconnect can relink without our help
         }
 
         // ---- 1b. NTP once ---------------------------------------------

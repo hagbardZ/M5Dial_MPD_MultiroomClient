@@ -20,7 +20,9 @@ style), and reconnects automatically.
 
 - **Now-playing screen** — artist / title / album, smooth progress ring,
   elapsed + total time, play state, volume.  Long titles scroll (marquee)
-  around the round screen.
+  around the round screen.  When Wi-Fi is down the progress ring turns solid
+  red (the elapsed arc is hidden until the link is back, so the warning is
+  unmissable even with nothing queued).
 - **Webradio** — streams show the station name instead of the artist, and
   the real wall-clock time (NTP-synced, timezone offset configurable)
   instead of the meaningless stream play time.
