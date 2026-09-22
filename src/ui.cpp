@@ -43,23 +43,32 @@ enum Mode : uint8_t {
     MODE_KNX,
 };
 
-// play-menu rows (the KNX device + submenu rows only exist with KNX enabled)
-enum PlayRow : uint8_t {
-    PLAY_RANDOM = 0, PLAY_REPEAT,
-#if KNX_ENABLE
-    PLAY_AMP, PLAY_AMP2, PLAY_KNX,
-#endif
-    PLAY_ROWS
-};
+// play-menu rows: 0 = random, 1 = repeat, then one row per play-menu
+// device (the first KNX_PLAYMENU_DEVICES enabled devices), then the
+// "KNX" submenu entry — but only if there are any KNX-menu devices.
+// Safe without KNX too (knxDeviceCount()/knxMenuDeviceCount() are 0).
+static constexpr int kPlayBaseRows = 2;
 
-static int playRowCount() { return (int)PLAY_ROWS; }
+static int playPinCount() {
+    int p = KNX_PLAYMENU_DEVICES;
+    int n = knxDeviceCount();
+    return (p < n) ? p : n;   // fewer devices than slots: show what exists
+}
 
-static int playDeviceRow(int i) {
-#if KNX_ENABLE
-    return (i >= PLAY_AMP && i < PLAY_KNX) ? (i - PLAY_AMP) : -1;
-#else
-    return -1;
-#endif
+static int playRowCount() {
+    int c = kPlayBaseRows + playPinCount();
+    if (knxMenuDeviceCount() > 0) c += 1;   // the "KNX" submenu row
+    return c;
+}
+
+static int playRowDev(int r) {
+    int p = playPinCount();
+    if (r < kPlayBaseRows || r >= kPlayBaseRows + p) return -1;
+    return r - kPlayBaseRows;
+}
+
+static bool playRowIsKnx(int r) {
+    return knxMenuDeviceCount() > 0 && r == playRowCount() - 1;
 }
 
 // ---------------------------------------------------------------------
@@ -614,20 +623,18 @@ static void drawPlayMenuView(const SharedState& snap) {
         uint16_t col = cDim;
         String   text;
 
-        if (i == PLAY_RANDOM) {
+        if (i == 0) {
             text = (snap.status.random ? "[x] " : "[ ] ") + String("Random");
             if (snap.status.random) col = cOk;
-        } else if (i == PLAY_REPEAT) {
+        } else if (i == 1) {
             text = (snap.status.single ? "[x] " : "[ ] ") + String("Repeat song");
             if (snap.status.single) col = cOk;
-#if KNX_ENABLE
-        } else if (i == PLAY_KNX) {
+        } else if (playRowIsKnx(i)) {
             text = String("KNX");
             col  = cHighlight;
-#endif
         } else {
-            int      dev = playDeviceRow(i);
-            bool     on  = knxAmpIsOn(dev);
+            int      dev   = playRowDev(i);
+            bool     on    = knxAmpIsOn(dev);
             bool     valid = knxAmpIsValid(dev);
             text = String(valid ? (on ? "[x] " : "[ ] ") : "[?] ") +
                    String(knxDeviceName(dev));
@@ -1107,16 +1114,14 @@ void uiButtonClick() {
     }
 
     case MODE_PLAYMENU:
-        if (s_playSel == PLAY_RANDOM) post(CMD_SET_RANDOM, -1);
-        else if (s_playSel == PLAY_REPEAT) post(CMD_SET_REPEAT, -1);
-#if KNX_ENABLE
-        else if (s_playSel == PLAY_KNX) {
+        if (s_playSel == 0) post(CMD_SET_RANDOM, -1);
+        else if (s_playSel == 1) post(CMD_SET_REPEAT, -1);
+        else if (playRowIsKnx(s_playSel)) {
             s_mode   = MODE_KNX;
             s_knxSel = 0;
             s_dirty  = true;
-        } else if (playDeviceRow(s_playSel) >= 0)
-            post(CMD_KNX_TOGGLE, playDeviceRow(s_playSel));
-#endif
+        } else if (playRowDev(s_playSel) >= 0)
+            post(CMD_KNX_TOGGLE, playRowDev(s_playSel));
         s_dirty = true;
         break;
 
@@ -1334,7 +1339,7 @@ void uiTouchTick() {
             s_dirty = true;
         } else {
             s_mode  = MODE_PLAYMENU;
-            s_playSel = PLAY_RANDOM;
+            s_playSel = 0;
             syncModes();
             s_dirty = true;
         }
@@ -1395,15 +1400,13 @@ for (int i = 0; i < kMenuCount; ++i) {
             for (int i = 0; i < playRowCount(); ++i) {
                 int y = 60 + i * 30;
                 if (td.y < y - 14 || td.y > y + 14) continue;
-                if (i == PLAY_RANDOM) post(CMD_SET_RANDOM, -1);
-                else if (i == PLAY_REPEAT) post(CMD_SET_REPEAT, -1);
-#if KNX_ENABLE
-                else if (i == PLAY_KNX) {
+                if (i == 0) post(CMD_SET_RANDOM, -1);
+                else if (i == 1) post(CMD_SET_REPEAT, -1);
+                else if (playRowIsKnx(i)) {
                     s_mode   = MODE_KNX;
                     s_knxSel = 0;
-                } else if (playDeviceRow(i) >= 0)
-                    post(CMD_KNX_TOGGLE, playDeviceRow(i));
-#endif
+                } else if (playRowDev(i) >= 0)
+                    post(CMD_KNX_TOGGLE, playRowDev(i));
                 s_dirty = true;
                 break;
             }

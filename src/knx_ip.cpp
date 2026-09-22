@@ -32,44 +32,80 @@ static uint16_t ga(uint8_t m, uint8_t mid, uint8_t s) {
 static const uint16_t SRC_ADDR = KNX_MY_ADDRESS;
 
 // ---------------------------------------------------------------------
-// Configured KNX devices (toggle + status group per device).
+// Configured KNX devices (toggle + status group per device).  Each entry
+// is only compiled in when its KNX_DEVICEn_ENABLE define is set, so the
+// table compresses (device indices shift down) when a device is disabled.
 struct DevCfg {
+    const char* name;
     uint16_t toggleGA;
     uint16_t statusGA;
     uint8_t  tMid, tSub;   // for log messages
     uint8_t  sMid, sSub;
 };
 static const DevCfg kDevs[] = {
-    { ga(KNX_DEVICE1_TOGGLE_MAIN, KNX_DEVICE1_TOGGLE_MIDDLE,
+#if KNX_DEVICE1_ENABLE
+    { KNX_DEVICE1_NAME,
+      ga(KNX_DEVICE1_TOGGLE_MAIN, KNX_DEVICE1_TOGGLE_MIDDLE,
          KNX_DEVICE1_TOGGLE_SUB),
       ga(KNX_DEVICE1_STATUS_MAIN, KNX_DEVICE1_STATUS_MIDDLE,
          KNX_DEVICE1_STATUS_SUB),
       KNX_DEVICE1_TOGGLE_MIDDLE, KNX_DEVICE1_TOGGLE_SUB,
       KNX_DEVICE1_STATUS_MIDDLE, KNX_DEVICE1_STATUS_SUB },
-    { ga(KNX_DEVICE2_TOGGLE_MAIN, KNX_DEVICE2_TOGGLE_MIDDLE,
+#endif
+#if KNX_DEVICE2_ENABLE
+    { KNX_DEVICE2_NAME,
+      ga(KNX_DEVICE2_TOGGLE_MAIN, KNX_DEVICE2_TOGGLE_MIDDLE,
          KNX_DEVICE2_TOGGLE_SUB),
       ga(KNX_DEVICE2_STATUS_MAIN, KNX_DEVICE2_STATUS_MIDDLE,
          KNX_DEVICE2_STATUS_SUB),
       KNX_DEVICE2_TOGGLE_MIDDLE, KNX_DEVICE2_TOGGLE_SUB,
       KNX_DEVICE2_STATUS_MIDDLE, KNX_DEVICE2_STATUS_SUB },
-    { ga(KNX_DEVICE3_TOGGLE_MAIN, KNX_DEVICE3_TOGGLE_MIDDLE,
+#endif
+#if KNX_DEVICE3_ENABLE
+    { KNX_DEVICE3_NAME,
+      ga(KNX_DEVICE3_TOGGLE_MAIN, KNX_DEVICE3_TOGGLE_MIDDLE,
          KNX_DEVICE3_TOGGLE_SUB),
       ga(KNX_DEVICE3_STATUS_MAIN, KNX_DEVICE3_STATUS_MIDDLE,
          KNX_DEVICE3_STATUS_SUB),
       KNX_DEVICE3_TOGGLE_MIDDLE, KNX_DEVICE3_TOGGLE_SUB,
       KNX_DEVICE3_STATUS_MIDDLE, KNX_DEVICE3_STATUS_SUB },
-    { ga(KNX_DEVICE4_TOGGLE_MAIN, KNX_DEVICE4_TOGGLE_MIDDLE,
+#endif
+#if KNX_DEVICE4_ENABLE
+    { KNX_DEVICE4_NAME,
+      ga(KNX_DEVICE4_TOGGLE_MAIN, KNX_DEVICE4_TOGGLE_MIDDLE,
          KNX_DEVICE4_TOGGLE_SUB),
       ga(KNX_DEVICE4_STATUS_MAIN, KNX_DEVICE4_STATUS_MIDDLE,
          KNX_DEVICE4_STATUS_SUB),
       KNX_DEVICE4_TOGGLE_MIDDLE, KNX_DEVICE4_TOGGLE_SUB,
       KNX_DEVICE4_STATUS_MIDDLE, KNX_DEVICE4_STATUS_SUB },
-    { ga(KNX_DEVICE5_TOGGLE_MAIN, KNX_DEVICE5_TOGGLE_MIDDLE,
+#endif
+#if KNX_DEVICE5_ENABLE
+    { KNX_DEVICE5_NAME,
+      ga(KNX_DEVICE5_TOGGLE_MAIN, KNX_DEVICE5_TOGGLE_MIDDLE,
          KNX_DEVICE5_TOGGLE_SUB),
       ga(KNX_DEVICE5_STATUS_MAIN, KNX_DEVICE5_STATUS_MIDDLE,
          KNX_DEVICE5_STATUS_SUB),
       KNX_DEVICE5_TOGGLE_MIDDLE, KNX_DEVICE5_TOGGLE_SUB,
       KNX_DEVICE5_STATUS_MIDDLE, KNX_DEVICE5_STATUS_SUB },
+#endif
+#if KNX_DEVICE6_ENABLE
+    { KNX_DEVICE6_NAME,
+      ga(KNX_DEVICE6_TOGGLE_MAIN, KNX_DEVICE6_TOGGLE_MIDDLE,
+         KNX_DEVICE6_TOGGLE_SUB),
+      ga(KNX_DEVICE6_STATUS_MAIN, KNX_DEVICE6_STATUS_MIDDLE,
+         KNX_DEVICE6_STATUS_SUB),
+      KNX_DEVICE6_TOGGLE_MIDDLE, KNX_DEVICE6_TOGGLE_SUB,
+      KNX_DEVICE6_STATUS_MIDDLE, KNX_DEVICE6_STATUS_SUB },
+#endif
+#if KNX_DEVICE7_ENABLE
+    { KNX_DEVICE7_NAME,
+      ga(KNX_DEVICE7_TOGGLE_MAIN, KNX_DEVICE7_TOGGLE_MIDDLE,
+         KNX_DEVICE7_TOGGLE_SUB),
+      ga(KNX_DEVICE7_STATUS_MAIN, KNX_DEVICE7_STATUS_MIDDLE,
+         KNX_DEVICE7_STATUS_SUB),
+      KNX_DEVICE7_TOGGLE_MIDDLE, KNX_DEVICE7_TOGGLE_SUB,
+      KNX_DEVICE7_STATUS_MIDDLE, KNX_DEVICE7_STATUS_SUB },
+#endif
 };
 static const int kDevCount = (int)(sizeof kDevs / sizeof kDevs[0]);
 
@@ -133,14 +169,8 @@ bool knxAmpIsValid(int dev) {
 int knxDeviceCount() { return kDevCount; }
 
 const char* knxDeviceName(int dev) {
-    switch (dev) {
-        case 0: return KNX_DEVICE1_NAME;
-        case 1: return KNX_DEVICE2_NAME;
-        case 2: return KNX_DEVICE3_NAME;
-        case 3: return KNX_DEVICE4_NAME;
-        case 4: return KNX_DEVICE5_NAME;
-        default: return "";
-    }
+    if (dev >= 0 && dev < kDevCount) return kDevs[dev].name;
+    return "";
 }
 
 // Devices 0..knxPlayDevCount()-1 are pinned to the play menu; the rest are
