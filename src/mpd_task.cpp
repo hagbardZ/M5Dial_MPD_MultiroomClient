@@ -8,6 +8,7 @@
 #include "Playlist.h"
 #include "app.h"
 #include "config.h"
+#include "knx_ip.h"
 
 // forward declarations -------------------------------------------------
 static void doBrowse(uint8_t type, const String& arg, const String& arg2,
@@ -32,6 +33,11 @@ static const MpdInstance s_instances[] = { MPD_INSTANCES };
 static const int s_instanceCount =
     (int)(sizeof(s_instances) / sizeof(s_instances[0]));
 static int s_curInst = 0;   // current room index
+// Consecutive MPD connect failures; fallback hops to the next instance
+// once this reaches s_mpdFallbackFails.
+static int      s_mpdConnFails  = 0;
+static bool     s_userRoomSel   = false;  // user picked a room this boot
+static constexpr int s_mpdFallbackFails = 4;
 
 int mpdInstanceCount() { return s_instanceCount; }
 const char* mpdInstanceName(int i) {
@@ -169,6 +175,7 @@ static void selectInstance(int idx) {
 
     s_mpd.begin(MPD_HOST, s_instances[idx].port, MPD_PASSWORD);
     s_mpd.disconnect();          // force reconnect on the new port
+    s_mpdConnFails = 0;
     setPl(false);
     setPlErr(0);
     s_plReloadReq = true;
@@ -263,6 +270,9 @@ static void execCommand(const MpdCommand& c) {
                               p.length() ? p.c_str() : "/");
             break;
         }
+        case CMD_KNX_TOGGLE:
+            knxToggle(c.value);
+            break;
         case CMD_BROWSE: {
             xSemaphoreTake(gShared.mux, portMAX_DELAY);
             uint8_t  t = gShared.brReqType;
@@ -283,14 +293,28 @@ static void execCommand(const MpdCommand& c) {
             break;
         }
         case CMD_SET_INSTANCE:
-            if (c.value >= 0 && c.value < s_instanceCount)
+            if (c.value >= 0 && c.value < s_instanceCount) {
+                s_userRoomSel = true;   // remember: the user chose this room
                 selectInstance((int)c.value);
+            }
             break;
         default: break;
     }
 }
 
 // ---------------------------------------------------------------------
+// ---------------------------------------------------------------------
+// Commands that must keep working while the MPD connection is down:
+// KNX device toggles and switching rooms.  Everything else needs MPD and
+// is dropped (it cannot be served anyway while offline).
+static void drainDisconnectedCommands() {
+    MpdCommand c;
+    while (xQueueReceive(gCmdQueue, &c, 0)) {
+        if (c.type == CMD_KNX_TOGGLE)      knxToggle(c.value);
+        else if (c.type == CMD_SET_INSTANCE) selectInstance((int)c.value);
+    }
+}
+
 static bool drainCommands() {
     if (uxQueueMessagesWaiting(gCmdQueue) == 0) return false;
     if (s_mpd.idleActive()) s_mpd.endIdle();
@@ -493,14 +517,33 @@ static void browseAct(uint8_t act, const String& uri) {
 }
 
 // =====================================================================
+static uint32_t s_wifiLastTry = 0;
+static bool     s_wifiEverTried = false;   // boot: first attempt must not wait
+
 static void tryConnectWifi() {
     if (WiFi.status() == WL_CONNECTED) { setWifi(true); return; }
+
+    // Cooldown between attempts: repeatedly calling WiFi.begin() while the
+    // stack is mid-reconnect is a known ESP32 hammering bug that can leave
+    // the station stuck.  Auto-reconnect (setAutoReconnect) keeps trying on
+    // its own; here we only (re)arm it at most every 15 s when it's not
+    // already running its state machine.
+    if (s_wifiEverTried && (int32_t)(millis() - s_wifiLastTry) < 15000) return;
+    s_wifiEverTried = true;
+    s_wifiLastTry = millis();
+
     setWifi(false);
+    Serial.printf("[wifi] attempt, status %d\n", (int)WiFi.status());
     WiFi.mode(WIFI_STA);
     WiFi.setAutoReconnect(true);
     WiFi.begin(WIFI_SSID, WIFI_PASS);
+
     uint32_t t0 = millis();
-    while (WiFi.status() != WL_CONNECTED && millis() - t0 < 15000) delay(200);
+    while (WiFi.status() != WL_CONNECTED && millis() - t0 < 3000) delay(200);
+    if (WiFi.status() == WL_CONNECTED)
+        Serial.printf("[wifi] connected (rssi %ddBm)\n", (int)WiFi.RSSI());
+    else
+        Serial.printf("[wifi] no link yet (status %d)\n", (int)WiFi.status());
     setWifi(WiFi.status() == WL_CONNECTED);
 }
 
@@ -512,6 +555,7 @@ static void mpdTask(void*) {
     for (;;) {
         // ---- 1. Wi-Fi ------------------------------------------------
         if (WiFi.status() != WL_CONNECTED) {
+            knxReset();                     // drop the tunnel while offline
             if (s_mpd.isConnected()) s_mpd.disconnect();
             setPl(false);
             tryConnectWifi();
@@ -527,16 +571,45 @@ static void mpdTask(void*) {
             configTime((long)TIMEZONE_UTC_HOURS * 3600, 0, NTP_SERVER);
         }
 
+        // ---- 1c. KNX tunnel (non-blocking) -----------------------------
+        knxLoop();
+
         // ---- 2. MPD connection ----------------------------------------
         if (!s_mpd.isConnected()) {
             bool ok = s_mpd.connect();
             setPl(ok);
+            if (ok)
+                Serial.printf("[mpd] connected to %s:%d (\"%s\")\n", MPD_HOST,
+                              s_instances[s_curInst].port,
+                              s_instances[s_curInst].name);
+            else
+                Serial.printf("[mpd] connect to %s:%d FAILED (\"%s\")\n",
+                              MPD_HOST, s_instances[s_curInst].port,
+                              s_instances[s_curInst].name);
             if (!ok) {
+                drainDisconnectedCommands();   // serve KNX / room-change now
                 vTaskDelay(pdMS_TO_TICKS(mpdReconnectMs));
-                if (mpdReconnectMs < 30000) mpdReconnectMs *= 2;
+                if (mpdReconnectMs < 10000) mpdReconnectMs *= 2;
+                // Self-heal: if the saved room cannot be reached (e.g. its
+                // MPD is wedged like the 6601 instance), hop to the next
+                // instance instead of sitting on a red MPD dot forever.
+                // Only automatic while the user hasn't explicitly picked a
+                // room in this session.
+                if (!s_userRoomSel &&
+                    ++s_mpdConnFails >= s_mpdFallbackFails) {
+                    s_mpdConnFails = 0;
+                    int next = (s_curInst + 1) % s_instanceCount;
+                    Serial.printf("[mpd] %d fails on \"%s\" - trying "
+                                  "\"%s\" next\n",
+                                  s_mpdFallbackFails,
+                                  s_instances[s_curInst].name,
+                                  s_instances[next].name);
+                    selectInstance(next);
+                }
                 continue;
             }
             mpdReconnectMs = 1000;
+            s_mpdConnFails = 0;
             refreshShared();
             s_mpd.startIdle();
             lastRef = millis();
@@ -654,6 +727,11 @@ void startMpdTask() {
     gShared.curInst = (uint8_t)s_curInst;
 
     s_mpd.begin(MPD_HOST, s_instances[s_curInst].port, MPD_PASSWORD);
+    s_mpdConnFails = 0;
+    s_userRoomSel  = false;
+    Serial.printf("[mpd] instance %d = \"%s\" (port %d)\n", s_curInst,
+                  s_instances[s_curInst].name, s_instances[s_curInst].port);
+    knxSetup();
     logFetchCap();
     xTaskCreatePinnedToCore(mpdTask, "mpd", 8192, nullptr, 2, &s_mpdTask, 0);
 }

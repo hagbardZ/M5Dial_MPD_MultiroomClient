@@ -13,6 +13,7 @@ namespace lgfx {
 #include "Playlist.h"
 #include "app.h"
 #include "config.h"
+#include "knx_ip.h"
 #include "mpd_task.h"
 
 // ---------------------------------------------------------------------
@@ -42,7 +43,13 @@ enum Mode : uint8_t {
 };
 
 // play-menu rows
-enum PlayRow : uint8_t { PLAY_RANDOM = 0, PLAY_REPEAT, PLAY_CLEAR, PLAY_ROWS };
+enum PlayRow : uint8_t {
+    PLAY_RANDOM = 0, PLAY_REPEAT, PLAY_AMP, PLAY_AMP2, PLAY_ROWS
+};
+
+static int playDeviceRow(int i) {
+    return (i == PLAY_AMP) ? 0 : (i == PLAY_AMP2) ? 1 : -1;
+}
 
 // ---------------------------------------------------------------------
 // Browser navigation stack.  The top frame is loaded by the MPD task and
@@ -100,8 +107,10 @@ static void showToast(const char* s, uint16_t col) {
     s_toastUntil = millis() + 2200;
 }
 
-static const char* s_menuItems[5] = {"Queue", "Files", "Library", "Playlists",
-                                     "Back"};
+static const int kMenuCount = 6;
+static const char* s_menuItems[kMenuCount] = {"Queue", "Files", "Library",
+                                              "Playlists", "Clear playlist",
+                                              "Back"};
 
 // colours
 static uint16_t cBg, cRing, cTrack, cProgress, cText, cDim, cOk, cBad,
@@ -597,9 +606,16 @@ static void drawPlayMenuView(const SharedState& snap) {
         } else if (i == PLAY_REPEAT) {
             text = (snap.status.single ? "[x] " : "[ ] ") + String("Repeat song");
             if (snap.status.single) col = cOk;
-        } else {
-            text = "Clear playlist";
-            col  = cBad;
+        } else if ((i == PLAY_AMP) || (i == PLAY_AMP2)) {
+            int      dev = playDeviceRow(i);
+            bool     on  = knxAmpIsOn(dev);
+            bool     valid = knxAmpIsValid(dev);
+            const char* devName = (dev == 0) ? KNX_DEVICE1_NAME
+                                             : KNX_DEVICE2_NAME;
+            text = String(valid ? (on ? "[x] " : "[ ] ") : "[?] ") +
+                   String(devName);
+            if (!valid) col = cWarn;
+            else if (on) col = cOk;
         }
         if (sel) col = cText;
         drawText(CX, y, col, text.c_str());
@@ -861,10 +877,13 @@ void uiTick() {
     bool timeTick = (now - lastDraw >= 120);
 
     uint32_t      fsel = topSelSig();
+    uint32_t      amp  = (knxAmpIsValid(0) ? 16u : 0u) + (knxAmpIsOn(0) ? 64u : 0u) +
+                        (knxAmpIsValid(1) ? 32u : 0u) + (knxAmpIsOn(1) ? 128u : 0u);
     uint32_t      sig  = snap.statusGen + snap.songGen * 7u +
                         snap.plGen * 13u + snap.brGen * 17u +
                         (snap.wifi ? 1u : 0u) + (snap.mpd ? 2u : 0u) +
                         (snap.brLoaded ? 4u : 0u) + (toastOn ? 8u : 0u) +
+                        amp +
                         (uint32_t)s_mode * 31u +
                         fsel * 101u + (uint32_t)s_depth * 3u +
                         (uint32_t)s_menuSel * 19u +
@@ -909,8 +928,8 @@ void uiEncoder(int delta) {
         }
     } else if (s_mode == MODE_MENU) {
         s_menuSel += delta;
-        if (s_menuSel < 0) s_menuSel = 4;   // wrap: top -> bottom
-        if (s_menuSel > 4) s_menuSel = 0;   // wrap: bottom -> top
+        if (s_menuSel < 0) s_menuSel = kMenuCount - 1;  // wrap
+        if (s_menuSel >= kMenuCount) s_menuSel = 0;     // wrap
         s_dirty = true;
     } else if (s_mode == MODE_INSTS) {
         int cnt = mpdInstanceCount();
@@ -994,7 +1013,12 @@ void uiButtonClick() {
         case 3:   // Playlists
             enterBrowse(Fb::PLISTS, "");
             break;
-        case 4:   // Back (now playing)
+        case 4:   // Clear playlist
+            post(CMD_CLEAR);
+            showToast("playlist cleared", cWarn);
+            s_dirty = true;
+            break;
+        case 5:   // Back (now playing)
             s_mode = MODE_NOW;
             syncModes();
             s_dirty = true;
@@ -1019,7 +1043,8 @@ void uiButtonClick() {
     case MODE_PLAYMENU:
         if (s_playSel == PLAY_RANDOM) post(CMD_SET_RANDOM, -1);
         else if (s_playSel == PLAY_REPEAT) post(CMD_SET_REPEAT, -1);
-        else { post(CMD_CLEAR); showToast("playlist cleared", cWarn); }
+        else if (playDeviceRow(s_playSel) >= 0)
+            post(CMD_KNX_TOGGLE, playDeviceRow(s_playSel));
         s_dirty = true;
         break;
 
@@ -1259,7 +1284,7 @@ void uiTouchTick() {
         if (sel < 0) sel = 0;
 
         int top = windowTop(sel, snap.brCount);
-        for (int i = 0; i < 5; ++i) {
+for (int i = 0; i < kMenuCount; ++i) {
             int idx   = top + i;
             if (idx >= (int)snap.brCount) break;
             int y = 50 + i * 24;
@@ -1288,7 +1313,8 @@ void uiTouchTick() {
             if (ty >= y - 14 && ty <= y + 14) {
                 if (i == PLAY_RANDOM) post(CMD_SET_RANDOM, -1);
                 else if (i == PLAY_REPEAT) post(CMD_SET_REPEAT, -1);
-                else { post(CMD_CLEAR); showToast("playlist cleared", cWarn); }
+                else if (playDeviceRow(i) >= 0)
+                    post(CMD_KNX_TOGGLE, playDeviceRow(i));
                 s_dirty = true;
                 break;
             }

@@ -28,7 +28,21 @@ style), and reconnects automatically.
   repeat toggle that always repeats the **current song** (`repeat` + `single`),
   never the whole queue.
 - **Main menu** — hold in the now-playing screen for a menu hub:
-  Queue, Files, Library, Playlists, Back.
+  Queue, Files, Library, Playlists, Clear playlist, Back.
+- **Play menu** — tap the "playing" text in the now-playing screen: toggle
+  random and repeat-current, and (with KNX enabled) each configured KNX
+  device row shows its live bus state as `[x]` / `[ ]` / `[?]` and toggles
+  its On/Off group on a knob click or tap.
+- **KNX (KNXnet/IP tunneling)** — optional, off by default; enable with
+  `KNX_ENABLE`.  A minimal UDP tunneling client that talks directly to a KNX
+  IP interface (MDT / Gira / TP-UART gateway, default `192.168.23.35:3671`)
+  without ETS, and toggles the On/Off (DPT 1.001) group addresses of up to
+  two devices — typically amplifiers — from the play menu.  Each device has
+  a *toggle* group (write `0`/`1`) and a *status* group (read back; shown as
+  `[x]`/`[ ]`/`[?]` until it has reported once).  The tunnel sends a
+  connection-state request every 30 s to keep the gateway lease alive,
+  reconnects with retry if the single tunnelling slot is busy, and never
+  blocks the UI.
 - **Idle auto-return** — after `MENU_TIMEOUT_MS` without any input, every
   screen other than now playing falls back to it automatically.  The
   file/library/playlist browsers use the longer `BROWSE_TIMEOUT_MS` so you
@@ -55,7 +69,12 @@ style), and reconnects automatically.
   files, songs and folders. Hold = back.
 - **Auto-reconnect** — Wi-Fi and MPD both retry with back-off; the client
   uses MPD's `idle` command (incl. `database` / `stored_playlist`) so the UI
-  updates the moment something changes.
+  updates the moment something changes.  If the selected room cannot be
+  reached (accepts TCP but never answers — e.g. a wedged MPD), the client
+  automatically advances to the next configured instance after a few failed
+  attempts, so it never sits on a dead MPD forever unless you explicitly
+  picked that room this session.  KNX toggles keep working even while MPD is
+  offline.
 - **Memory-conscious** — runs in the ~128 KB internal-RAM heap of the
   PSRAM-less ESP32-S3-FN8.  Directory listings are buffered compactly
   (the `lsinfo` response is filtered down to `directory:` / `file:` /
@@ -75,7 +94,7 @@ None — it's an M5Dial. Just power it via USB-C.
 | Knob push (2×)     | –                              | Play now / load & play (files, songs, playlists) |
 | Knob push (long)   | Open main menu                 | Back (up one level)           |
 | Knob push (very long, ≥ `STANDBY_PRESS_MS`) | Standby (sleep)     | Standby (sleep)               |
-| Touch              | Prev/next arrows; tap "playing" for play menu; tap the title for the queue; tap room name to switch rooms | Tap an entry to select / play; tap the bottom counter in the file browser to rescan the folder |
+| Touch              | Prev/next arrows; tap "playing" for the play menu (random / repeat / KNX devices); tap the title for the queue; tap room name to switch rooms | Tap an entry to select / play; tap the bottom counter in the file browser to rescan the folder |
 
 Navigating the browser: rotate to move, click to open a folder / artist /
 album, single-click a playlist to clear the queue and play it, single-click a
@@ -113,6 +132,18 @@ Edit `include/config.h` before flashing:
 #define MPD_PORT       6600            // default instance port
 #define MPD_PASSWORD   ""              // optional MPD password
 
+// --- KNX (optional KNXnet/IP tunneling for amplifier on/off) ---
+#define KNX_ENABLE       1      // 0 = off (device rows hidden in play menu)
+#define KNX_HOST         "192.168.23.35"  // KNX IP interface (tunnelling)
+#define KNX_PORT         3671             // KNXnet/IP port
+#define KNX_LOCAL_PORT   3672             // local UDP source port (0 = auto)
+#define KNX_MY_ADDRESS   0xFFFA           // own source address, fresh per device
+#define KNX_DEBUG        1                // 1 = verbose serial log
+#define KNX_DEVICE1_NAME "Amplifier 1"
+#define KNX_DEVICE1_TOGGLE { 2, 1, 1 }    // toggle On/Off group address (main, middle, sub)
+#define KNX_DEVICE1_STATUS { 2, 1, 0 }    // status group, read back on boot
+// ... and the analogous KNX_DEVICE2_* for a second amplifier.
+
 #define NTP_SERVER         "pool.ntp.org"  // NTP for the webradio wall clock
 #define TIMEZONE_UTC_HOURS 2              // GMT offset (Germany: CEST=2, CET=1)
 #define MENU_TIMEOUT_MS    5000           // idle auto-return (menu/queue/play menu); 0 = off
@@ -129,7 +160,9 @@ MPD must be listening on TCP 6600 on your network (`bind_to_address` in
 
 Rooms are defined in `MPD_INSTANCES` (one MPD process per port). The first
 entry is used at boot; switch rooms by tapping the room name shown at the top
-of the now-playing screen (`MODE_INSTS`).
+of the now-playing screen (`MODE_INSTS`).  If the selected room cannot be
+reached (connects but never sends its greeting), the client hops to the next
+instance automatically after a few failures.
 
 ## Notes
 
@@ -140,6 +173,15 @@ of the now-playing screen (`MODE_INSTS`).
   run-length bitmap format. Regenerate with `/tmp/opencode/gen_umlaut_font.py`
   if you ever rebase the font. Non-Latin scripts would need the bundled `efont`
   fonts.
+- **KNX specifics** — the (optional) KNX client is a pure KNXnet/IP
+  tunneling over UDP; it needs no ETS and no group-address table since the
+  toggle/status groups are hard-coded in `config.h`.  Toggling sends a
+  *write* to the toggle group, then the device's own status group echoes the
+  new state back (`[x]`/`[ ]` updates) — the two addresses just need to be
+  wired in ETS as *On/Off* (DPT 1.001).  Give the Dial a dedicated source
+  address (`KNX_MY_ADDRESS`) per free KNX interface slot; two devices each
+  need their own free tunnelling slot, and ETS/monitoring tools claiming the
+  slot show up as a refused connection.
 - The buzzer and IMU are not used in v1.
 - **Standby power** — the display, backlight expander and RFID stay powered
   in both standby engines, so the board as a whole still draws a fraction of
@@ -159,7 +201,7 @@ boards/        custom M5Dial board definition (PlatformIO)
 include/       config.h
 variants/      project-local m5stack_dial pin map (pins_arduino.h)
 lib/MpdClient/ MPD protocol client + PSRAM playlist parser
-src/           main, background MPD task, round-screen UI
+src/           main, background MPD task, round-screen UI, KNX tunneling client
 ```
 
 example include/config.h:
@@ -215,6 +257,27 @@ example include/config.h:
     { "Bar", 6605 },                         \
     { "Basement", 6606 },                    \
     { "AllRooms", 6607 }
+
+// ---- KNX (optional) ---------------------------------------------------
+// KNXnet/IP tunnelling client: toggles On/Off group addresses of up to two
+// devices (e.g. amplifiers) from the play menu.  Set KNX_ENABLE 0 to leave
+// it out (the play menu then only shows random + repeat).
+#define KNX_ENABLE     1                       // 0 = off
+#define KNX_HOST       "192.168.23.35"         // tunnelling interface (MDT/Gira/TP-UART)
+#define KNX_PORT       3671
+#define KNX_LOCAL_PORT 3672                    // local UDP source port (0 = auto)
+#define KNX_MY_ADDRESS 0xFFFA                  // own source address (per device)
+#define KNX_DEBUG      1                       // 1 = verbose serial log
+
+// Device 1 (amplifier 1): toggle + status group (2/1/1 and 2/1/0).
+#define KNX_DEVICE1_NAME "Amplifier 1"
+#define KNX_DEVICE1_TOGGLE { 2, 1, 1 }
+#define KNX_DEVICE1_STATUS { 2, 1, 0 }
+
+// Device 2 (amplifier 2): toggle + status group (2/0/0 and 2/0/1).
+#define KNX_DEVICE2_NAME "Amplifier 2"
+#define KNX_DEVICE2_TOGGLE { 2, 0, 0 }
+#define KNX_DEVICE2_STATUS { 2, 0, 1 }
 ```
 
 

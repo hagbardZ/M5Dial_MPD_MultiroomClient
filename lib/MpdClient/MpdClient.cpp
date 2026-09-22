@@ -37,12 +37,17 @@ static String _q(const String& s) {
 // ---------------------------------------------------------------------
 bool MpdClient::connect() {
     disconnect();
-    if (!_sock.connect(_host.c_str(), _port)) return false;
+    if (!_sock.connect(_host.c_str(), _port)) {
+        Serial.printf("[mpd] tcp connect to %s:%u refused/timeout\n",
+                      _host.c_str(), _port);
+        return false;
+    }
     _sock.setTimeout(1);  // blocking reads are < 1s, we poll manually anyway
 
     String greet;
-    if (!_readLine(greet, 4000) || !greet.startsWith("OK MPD")) {
+    if (!_readLine(greet, 1500) || !greet.startsWith("OK MPD")) {
         _sock.stop();
+        Serial.printf("[mpd] bad greeting: \"%.40s\"\n", greet.c_str());
         return false;
     }
     if (_pass.length() > 0) {

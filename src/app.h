@@ -24,6 +24,7 @@ enum MpdCmdType : uint8_t {
     CMD_SET_REPEAT,    // value = 0=off, 1=on, -1=toggle
     CMD_CLEAR,         // clear the queue
     CMD_UPDATE_DB,     // scan a folder; directory in gShared.actArg ("" = whole DB)
+    CMD_KNX_TOGGLE,    // toggle KNX device (Value = 0-based device index)
 };
 
 struct MpdCommand {
