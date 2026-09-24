@@ -114,25 +114,80 @@ level too (KNX submenu → play menu → now-playing).
 
 ## Build & flash
 
+### Prerequisites
+
+- [PlatformIO Core](https://platformio.org/install) ≥ 6.x (or the PlatformIO
+  IDE inside VS Code).
+- `git` to clone the repository.
+
+### 1. Get the sources
+
 ```bash
-pio run                 # install toolchain + libs, compile
-pio run -t upload       # flash over USB (native USB-CDC)
+git clone <repository-url> MPDclient-M5Dial
+cd MPDclient-M5Dial
+```
+
+### 2. Create `include/config.h`
+
+`include/config.h` holds your Wi-Fi credentials, the MPD server address and
+the optional KNX settings, so it is **not** part of the repository: it is
+git-ignored and intentionally left out of the source tree.  The build fails
+if it is missing.  Write it from the
+[example include/config.h](#example-includeconfigh) below and adjust the
+values to match your network.
+
+### 3. Build
+
+```bash
+pio run
+```
+
+The first run downloads and installs the ESP32 toolchain, the arduino-esp32
+framework and the `m5stack/M5Dial` library automatically; this takes a few
+minutes.  Subsequent builds only compile what changed.
+
+### 4. Flash
+
+```bash
+pio run -t upload       # flash over USB (native USB-CDC, 921600 baud)
+```
+
+If the serial port is not auto-detected, uncomment and set `upload_port` in
+`platformio.ini` (e.g. `upload_port = /dev/ttyACM0`).
+
+### 5. Serial log
+
+```bash
 pio device monitor      # serial log at 115200 baud
 ```
 
-Requires [PlatformIO Core](https://platformio.org/install) ≥ 6.x.
-The board definition lives in `boards/m5stack-dial.json` (mirrors the
-official Arduino `M5Stack Dial` board).  Note: the M5Dial's ESP32-S3 module
-is the **FN8** variant — 8 MB flash and **no PSRAM** — so the firmware is
-tuned for the ~128 KB internal-RAM heap and never relies on PSRAM.
-The pinned arduino-esp32 fork does not ship the `m5stack_dial` pin map, so it
-is provided project-locally in `variants/m5stack_dial/pins_arduino.h` and wired
-in via the board's `build.variants_dir`.
-Version-pin `platform = espressif32@7.1.3` if you need a reproducible build.
+### Other useful commands
+
+```bash
+pio run -t clean        # full rebuild (delete build artifacts)
+pio run -v              # verbose output for debugging build issues
+pio run -t upload && pio device monitor   # flash and follow the log
+```
+
+### Build notes
+
+- The board definition lives in `boards/m5stack-dial.json` (mirrors the
+  official Arduino `M5Stack Dial` board).
+- The M5Dial's ESP32-S3 module is the **FN8** variant — 8 MB flash and
+  **no PSRAM** — so the firmware is tuned for the ~128 KB internal-RAM heap
+  and never relies on PSRAM.
+- The pinned arduino-esp32 fork does not ship the `m5stack_dial` pin map, so
+  it is provided project-locally in `variants/m5stack_dial/pins_arduino.h`
+  and wired in via the board's `build.variants_dir`.
+- Version-pin `platform = espressif32@7.1.3` in `platformio.ini` if you need
+  a reproducible build.
 
 ## Configuration
 
-Edit `include/config.h` before flashing:
+`include/config.h` is **not** shipped in the source tree.  You must create it
+yourself before building — copy the full
+[example include/config.h](#example-includeconfigh) below into
+`include/config.h` and edit it:
 
 ```c
 #define WIFI_SSID      "myssid"        // your 2.4 GHz SSID
@@ -213,13 +268,13 @@ instance automatically after a few failures.
 
 ```
 boards/        custom M5Dial board definition (PlatformIO)
-include/       config.h
+include/       config.h (not in the repo — create it from the example below)
 variants/      project-local m5stack_dial pin map (pins_arduino.h)
 lib/MpdClient/ MPD protocol client + PSRAM playlist parser
 src/           main, background MPD task, round-screen UI, KNX tunneling client
 ```
 
-example include/config.h:
+### example include/config.h:
 
 
 ```
