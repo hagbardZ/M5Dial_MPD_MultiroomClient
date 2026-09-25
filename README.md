@@ -57,7 +57,13 @@ style), and reconnects automatically.
   file/library/playlist browsers use the longer `BROWSE_TIMEOUT_MS` so you
   have time to look around.
 - **Standby** — hold the knob for `STANDBY_PRESS_MS` and the dial sleeps
-  (screen + Wi-Fi off); wake by pressing the knob or turning the wheel.
+  (screen + Wi-Fi off); wake by pressing the knob or turning the wheel.  The
+  dial also parks itself when Wi-Fi has no link for
+  `STANDBY_WIFI_TIMEOUT_MS` (2 min by default), so a missing access point
+  costs nothing instead of leaving a red Wi-Fi dot on screen for hours; the
+  reconnect attempts keep running during that grace period, so a short
+  dropout does not trigger it.  Both triggers are switched off separately in
+  `config.h` — see [Standby](#standby).
   Two low-power engines are selectable in `config.h`: *light sleep* for an
   instant wake (~1 mA) or *deep sleep with an RTC-timer poll* (the chip
   idles at ~7 µA, wakes itself every `STANDBY_POLL_MS` to glance at the
@@ -156,6 +162,13 @@ pio run -t upload       # flash over USB (native USB-CDC, 921600 baud)
 If the serial port is not auto-detected, uncomment and set `upload_port` in
 `platformio.ini` (e.g. `upload_port = /dev/ttyACM0`).
 
+On Linux the automatic chip reset over the native USB can fail with
+`OSError: [Errno 5] Input/output error`: esptool drops DTR, the ESP32-S3
+resets, its USB disappears and the upload dies on the next ioctl.  Hold **BOOT**
+(GPIO0) while tapping **RESET** to enter the ROM downloader, then flash with the
+reset dance disabled — copy the esptool line from `pio run -t upload -v` and add
+`--before no_reset --after no_reset`.
+
 ### 5. Serial log
 
 ```bash
@@ -222,6 +235,7 @@ yourself before building — copy the full
 
 // --- Standby ---
 #define STANDBY_PRESS_MS  2000   // very-long knob hold → standby; 0 = off
+#define STANDBY_WIFI_TIMEOUT_MS 120000  // no Wi-Fi link this long → standby; 0 = off
 #define STANDBY_DEEP_POLL 1      // 1 = deep sleep + RTC-timer poll, 0 = light sleep (instant wake)
 #define STANDBY_POLL_MS   1000   // knob/wheel scan interval in deep-poll mode
 ```
@@ -234,6 +248,35 @@ entry is used at boot; switch rooms by tapping the room name shown at the top
 of the now-playing screen (`MODE_INSTS`).  If the selected room cannot be
 reached (connects but never sends its greeting), the client hops to the next
 instance automatically after a few failures.
+
+### Standby
+
+Two independent triggers, both configured in `config.h`:
+
+| Trigger | Define | Default | What it does |
+|---------|--------|---------|--------------|
+| Very-long knob hold | `STANDBY_PRESS_MS` | `2000` | Screen + Wi-Fi off, sleep until the knob is pressed or the wheel is turned.  `0` = off. |
+| No Wi-Fi link | `STANDBY_WIFI_TIMEOUT_MS` | `120000` (2 min) | The same sleep, entered automatically.  `0` = off. |
+
+The Wi-Fi trigger is a link watchdog in `loop()` (`checkWifiStandby()` in
+`src/main.cpp`): the network task keeps its 15 s reconnect attempts, so the
+dial first shows the red ring and only dozes off once the outage lasts
+`STANDBY_WIFI_TIMEOUT_MS` — a missing access point costs nothing instead of
+leaving a red dot on screen for hours.  A single `WL_CONNECTED` restarts the
+timer, and a dial woken while the AP is still gone gets the full timeout again
+before sleeping once more.  Both paths use the same sleep engine, so
+`STANDBY_DEEP_POLL` / `STANDBY_POLL_MS` apply to the automatic sleep as well.
+In the serial log:
+
+```
+[standby] no Wi-Fi link for 120000 ms, going to standby
+[standby] deep sleep, scanning knob/wheel every 1000 ms
+```
+
+Because the two triggers are separate defines, you can keep one and drop the
+other — e.g. `STANDBY_PRESS_MS 0` for a dial nobody should be able to put to
+sleep by accident, which still parks itself when the AP disappears.  With both
+at `0` the whole standby code is compiled out.
 
 ## Notes
 
@@ -301,6 +344,16 @@ src/           main, background MPD task, round-screen UI, KNX tunneling client
 // except the now-playing view falls back to now playing.  0 disables it.
 #define MENU_TIMEOUT_MS    5000   // menu, queue, play menu, instances
 #define BROWSE_TIMEOUT_MS  15000  // files / library / playlists (longer, browse takes time)
+
+// ---- Standby -------------------------------------------------------
+// 1 = deep sleep + RTC-timer poll (~7 uA, wakes every STANDBY_POLL_MS to
+// scan the knob/wheel), 0 = light sleep (instant wake, ~1 mA).
+#define STANDBY_DEEP_POLL  1
+#define STANDBY_POLL_MS    1000   // knob/wheel scan interval in deep-poll mode
+// Very-long knob hold -> standby; 0 = off (the timeout below still works).
+#define STANDBY_PRESS_MS   2000
+// No Wi-Fi link for this long -> standby; 0 = off.
+#define STANDBY_WIFI_TIMEOUT_MS 120000   // 2 min
 
 // ---- Wi-Fi -----------------------------------------------------------
 #define WIFI_SSID "YOUR_WIFI_SSID"

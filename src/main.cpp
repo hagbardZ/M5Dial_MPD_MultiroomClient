@@ -15,7 +15,13 @@
 // ---------------------------------------------------------------------
 static long s_lastEnc = 0;
 
-#if STANDBY_PRESS_MS > 0
+// Standby exists as soon as one of its two triggers is compiled in: the
+// long knob press and the Wi-Fi-offline watchdog.  Either can be switched
+// off on its own in config.h.
+#define STANDBY_ENABLED \
+    (STANDBY_PRESS_MS > 0 || STANDBY_WIFI_TIMEOUT_MS > 0)
+
+#if STANDBY_ENABLED
 #if STANDBY_DEEP_POLL && STANDBY_POLL_MS > 0
 #define STANDBY_USE_DEEP 1   // deep sleep + RTC-timer poll (default engine)
 #else
@@ -116,10 +122,10 @@ static void enableStandbyWakeup() {
         gpio_wakeup_enable(p, GPIO_INTR_LOW_LEVEL);
     esp_sleep_enable_gpio_wakeup();
 }
-#endif  // STANDBY_PRESS_MS > 0
+#endif  // STANDBY_ENABLED
 
 // ---- standby entry ---------------------------------------------------
-#if STANDBY_PRESS_MS > 0
+#if STANDBY_ENABLED
 static void enterStandby() {
     Serial.println("[standby] entering standby (press knob or wheel to wake)");
     M5.Lcd.sleep();                             // backlight off + panel sleep
@@ -150,12 +156,42 @@ static void enterStandby() {
     Serial.println("[standby] woken, resuming");
 #endif
 }
-#endif  // STANDBY_PRESS_MS > 0
+
+// ---- Wi-Fi offline watchdog ------------------------------------------
+// The network task keeps retrying the access point every 15 s, so a missing
+// AP does not stall anything - but there is no point in burning battery on
+// a red Wi-Fi dot for hours either.  If there has been no link for
+// STANDBY_WIFI_TIMEOUT_MS the device dozes off like a manual standby.
+// Only a real link restarts the timer; a reconnect attempt does not.
+#if STANDBY_WIFI_TIMEOUT_MS > 0
+static void checkWifiStandby() {
+    static bool     s_offline = false;
+    static uint32_t s_since   = 0;
+
+    if (WiFi.status() == WL_CONNECTED) {
+        s_offline = false;
+        return;
+    }
+    if (!s_offline) {              // first sighting of the outage
+        s_offline = true;
+        s_since   = millis();
+        return;
+    }
+    if ((uint32_t)(millis() - s_since) < (uint32_t)STANDBY_WIFI_TIMEOUT_MS)
+        return;
+
+    Serial.printf("[standby] no Wi-Fi link for %u ms, going to standby\n",
+                  (unsigned)STANDBY_WIFI_TIMEOUT_MS);
+    s_offline = false;             // a woken device gets a fresh timeout
+    enterStandby();
+}
+#endif  // STANDBY_WIFI_TIMEOUT_MS > 0
+#endif  // STANDBY_ENABLED
 
 void setup() {
     esp_sleep_wakeup_cause_t cause = esp_sleep_get_wakeup_cause();
 
-#if STANDBY_PRESS_MS > 0 && STANDBY_USE_DEEP
+#if STANDBY_ENABLED && STANDBY_USE_DEEP
     // A timer wake while the deep-poll standby is armed: look at the
     // knob/wheel once, and if nothing happened, fall straight back into
     // deep sleep without ever initialising the display / Wi-Fi / UI.
@@ -186,7 +222,7 @@ void setup() {
     uiInit();
     startMpdTask();
 
-#if STANDBY_PRESS_MS > 0 && STANDBY_USE_DEEP
+#if STANDBY_ENABLED && STANDBY_USE_DEEP
     if (s_rtcSteps) {
         Serial.printf("[standby] woken, %d wheel step(s) while asleep "
                       "(worst poll overhead %.2f ms)\n",
@@ -212,6 +248,11 @@ void loop() {
     } else {
         s_standbyArmed = false;
     }
+#endif
+
+    // ---- no Wi-Fi for a while = standby --------------------------------
+#if STANDBY_WIFI_TIMEOUT_MS > 0
+    checkWifiStandby();
 #endif
 
     // ---- rotary encoder (volume / playlist scroll) -------------------
