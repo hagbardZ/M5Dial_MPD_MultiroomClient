@@ -1,5 +1,5 @@
 # M5Dial MPD client
-<img width="1408" height="768" alt="MultiroomSchema" src="https://github.com/user-attachments/assets/9598160a-27c4-4a93-9b2f-5a11954ee9d1" />
+<img width="1408" height="768" alt="MultiroomSchema" src="https://github.com/user-attachments/assets/16a2e74f-1377-4460-9a3c-c772e730fbf1" />
 <img width="200" height="200" alt="3" src="https://github.com/user-attachments/assets/2cd0432c-5442-4966-b122-60725384fb41" />
 <img width="200" height="200" alt="2" src="https://github.com/user-attachments/assets/8b79b56d-5681-4ea4-b3de-fba0de2117ba" />
 <img width="200" height="200" alt="1" src="https://github.com/user-attachments/assets/fde4fbc4-b269-4e55-a1e4-a361631e9343" />
