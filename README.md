@@ -1,11 +1,12 @@
 # M5Dial MPD client
-<img width="384" height="512" alt="mpdremote1" src="https://github.com/user-attachments/assets/59f3c87b-a7ed-4ebd-8933-2f8c7efccc82" />
-
-<img width="384" height="512" alt="mpdremote2" src="https://github.com/user-attachments/assets/91647093-f9b1-40d6-9a6f-60abe9fe14a6" />
-
-
-<img width="384" height="512" alt="mpdremote3" src="https://github.com/user-attachments/assets/47800bf3-b5d4-435e-8b34-dcd98cf3031a" />
-
+<img width="1408" height="768" alt="MultiroomSchema" src="https://github.com/user-attachments/assets/9598160a-27c4-4a93-9b2f-5a11954ee9d1" />
+<img width="200" height="200" alt="3" src="https://github.com/user-attachments/assets/2cd0432c-5442-4966-b122-60725384fb41" />
+<img width="200" height="200" alt="2" src="https://github.com/user-attachments/assets/8b79b56d-5681-4ea4-b3de-fba0de2117ba" />
+<img width="200" height="200" alt="1" src="https://github.com/user-attachments/assets/fde4fbc4-b269-4e55-a1e4-a361631e9343" />
+<img width="200" height="200" alt="4" src="https://github.com/user-attachments/assets/02d72d1c-d77d-416a-a742-d769e3e77f7d" />
+<img width="200" height="200" alt="5" src="https://github.com/user-attachments/assets/a55250f3-fea4-49c5-9818-92f7de09872b" />
+<img width="200" height="200" alt="7" src="https://github.com/user-attachments/assets/eee77671-0258-4008-9d72-ceec5520d0c6" />
+<img width="800" height="625" alt="6" src="https://github.com/user-attachments/assets/b68a5cc8-1a68-4d7b-aceb-f51281e3138f" />
 
 
 A compact [MPD](https://www.musicpd.org/) remote-control client for the
