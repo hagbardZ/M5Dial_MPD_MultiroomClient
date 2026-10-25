@@ -1,35 +1,29 @@
 #pragma once
 
 // =====================================================================
-//  Hardware abstraction - M5Dial
+//  Hardware abstraction
 //
-//  All device-specific details (board init, display geometry, input)
-//  flow through the HW_* macros and the shared M5Unified API
-//  (M5.begin / M5.Display / M5.Touch / M5.BtnA), so the rest of the
-//  firmware stays decoupled from the concrete hardware.
+//  The board is picked by a build flag set in platformio.ini, and the
+//  matching backend header supplies:
+//    HW                  the board object (display / touch / button /
+//                         encoder), shared by main.cpp and ui.cpp
+//    hwBegin()           board init, called from setup()
+//    hwStandbyPollPrepare()
+//                         pin setup for the deep-poll standby engine
+//    HW_W / HW_H / HW_UI_* / HW_ROUND / HW_CX / HW_CY
+//                         panel + logical UI geometry
+//    HW_ENC_A / HW_ENC_B / HW_BTN_PIN / HW_BTN_LEVEL
+//                         the three input pins the standby engines poll
+//    HW_HAS_ENCODER / HW_HAS_TOUCH
+//  Nothing above this header should name a concrete board.
 // =====================================================================
 
 #include "config.h"
 
-// ---- panel + logical UI geometry -------------------------------------
-// The UI runs in a square 240x240 sprite on the round 240x240 panel.
-#define HW_W        240
-#define HW_H        240
-#define HW_UI_W     240
-#define HW_UI_H     240
-#define HW_UI_X     0
-#define HW_UI_Y     0
-#define HW_ROUND    1
-
-// logical UI centre
-#define HW_CX       (HW_UI_W / 2)
-#define HW_CY       (HW_UI_H / 2)
-
-// ---- input ------------------------------------------------------------
-// M5Dial has the rotary encoder + push-knob; buttons use M5Unified.
-#define HW_HAS_ENCODER   1
-#define HW_BTN_A         M5.BtnA   // knob push
-#define HW_BTN_B         M5.BtnB   // (reserved)
-
-// ---- M5 stack ---------------------------------------------------------
-#include <M5Dial.h>
+#if defined(DEVICE_CROWPANEL)
+#include "board_crowpanel.h"
+#elif defined(DEVICE_M5DIAL)
+#include "board_m5dial.h"
+#else
+#error "no board selected - set DEVICE_M5DIAL or DEVICE_CROWPANEL in platformio.ini"
+#endif

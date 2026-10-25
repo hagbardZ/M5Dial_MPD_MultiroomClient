@@ -1,5 +1,4 @@
 #include <Arduino.h>
-#include <M5Dial.h>
 #include <WiFi.h>
 #include <driver/gpio.h>
 #include <esp_sleep.h>
@@ -9,6 +8,7 @@
 
 #include "app.h"
 #include "config.h"
+#include "hw.h"
 #include "mpd_task.h"
 #include "ui.h"
 
@@ -28,15 +28,25 @@ static long s_lastEnc = 0;
 #define STANDBY_USE_DEEP 0   // light sleep, instant knob/wheel wake
 #endif
 
-#define STANDBY_BTN   ((gpio_num_t)42)              // knob push (active low)
-#define STANDBY_ENC_A ((gpio_num_t)DIAL_ENCODER_PIN_A)  // wheel channel A (41)
-#define STANDBY_ENC_B ((gpio_num_t)DIAL_ENCODER_PIN_B)  // wheel channel B (40)
+// How long a knob press may be held down while entering standby before we
+// stop waiting for the release.  Generous enough to cover a deliberate
+// long press, but bounded so a stuck or bouncing switch cannot block the
+// shutdown forever.
+#if STANDBY_DEEP_POLL && STANDBY_POLL_MS > 5000
+#define WAKE_HOLD_MAX_MS (STANDBY_POLL_MS)
+#else
+#define WAKE_HOLD_MAX_MS 3000
+#endif
+
+#define STANDBY_BTN   ((gpio_num_t)HW_BTN_PIN)        // knob push
+#define STANDBY_ENC_A ((gpio_num_t)HW_ENC_A)          // wheel channel A
+#define STANDBY_ENC_B ((gpio_num_t)HW_ENC_B)          // wheel channel B
 
 // ---- shared helpers -------------------------------------------------
 static void waitForButtonRelease(uint32_t maxMs) {
     uint32_t t0 = millis();
-    while (M5Dial.BtnA.isPressed() && millis() - t0 < maxMs) {
-        M5Dial.update();
+    while (HW.BtnA.isPressed() && millis() - t0 < maxMs) {
+        HW.update();
         delay(5);
     }
 }
@@ -48,17 +58,17 @@ static void swallowWakeInput() {
     uint32_t t0 = millis();
     bool sawPress = false;
     while (millis() - t0 < 600) {
-        M5Dial.update();
-        if (M5Dial.BtnA.isPressed()) sawPress = true;
+        HW.update();
+        if (HW.BtnA.isPressed()) sawPress = true;
         else if (sawPress) break;               // the wake press was released
         delay(5);
     }
-    M5Dial.BtnA.wasClicked();
-    M5Dial.BtnA.wasHold();
-    M5Dial.BtnA.wasDoubleClicked();
-    M5Dial.BtnA.setState(millis(),
-                         m5::Button_Class::button_state_t::state_nochange);
-    s_lastEnc = M5Dial.Encoder.read();
+    HW.BtnA.wasClicked();
+    HW.BtnA.wasHold();
+    HW.BtnA.wasDoubleClicked();
+    HW.BtnA.setState(millis(),
+                     m5::Button_Class::button_state_t::state_nochange);
+    s_lastEnc = HW.Encoder.read();
 }
 
 // ---- quadrature helper for the raw wheel pins -----------------------
@@ -90,13 +100,12 @@ RTC_DATA_ATTR static int32_t  s_rtcSteps;       // wheel steps during standby
 RTC_DATA_ATTR static uint32_t s_rtcMaxPollUs;   // worst poll overhead seen
 
 // Called from setup() on a timer-wake while the poll is armed.  Must be
-// cheap and must not touch Serial / M5Dial / Wi-Fi: it only re-reads the
-// three pins.  Returns true when the knob was pressed or the wheel moved.
+// cheap and must not touch Serial / the board object / Wi-Fi: it only
+// re-reads the three pins.  Returns true when the knob was pressed or
+// the wheel moved.
 static bool pollStandbyWake() {
     uint32_t t0 = esp_timer_get_time();
-    pinMode(STANDBY_ENC_A, INPUT_PULLUP);
-    pinMode(STANDBY_ENC_B, INPUT_PULLUP);
-    pinMode(STANDBY_BTN,  INPUT_PULLUP);
+    hwStandbyPollPrepare();
 
     uint8_t now = encStatePins();
     bool moved = (now != s_rtcPrev);
@@ -105,10 +114,10 @@ static bool pollStandbyWake() {
         s_rtcPrev = now;
     }
 
-    bool press = (digitalRead(STANDBY_BTN) == 0);
+    bool press = (digitalRead(STANDBY_BTN) == HW_BTN_LEVEL);
     if (press) {
         esp_rom_delay_us(5000);                  // cheap debounce
-        press = (digitalRead(STANDBY_BTN) == 0);
+        press = (digitalRead(STANDBY_BTN) == HW_BTN_LEVEL);
     }
 
     uint32_t dt = esp_timer_get_time() - t0;
@@ -128,8 +137,21 @@ static void enableStandbyWakeup() {
 #if STANDBY_ENABLED
 static void enterStandby() {
     Serial.println("[standby] entering standby (press knob or wheel to wake)");
-    M5.Lcd.sleep();                             // backlight off + panel sleep
-    waitForButtonRelease(3000);                 // do not sleep while held down
+
+    // The goodbye animation has to run before hwDisplaySleep() below, which
+    // drops the LED power rail.  Once the rail is down the pixels are dead,
+    // so anything the LED task still wants to draw afterwards is lost.  The
+    // call is blocking and takes about 1.5 s for the three turns.
+    const uint32_t ledMs = hwLedShutdown();
+    if (ledMs) Serial.printf("[standby] LED goodbye took %u ms\n", (unsigned)ledMs);
+
+    hwDisplaySleep();                           // backlight off + panel sleep
+    // Do not sleep while the knob is still held: the next poll would read
+    // that held state as a fresh press and wake the device right back up.
+    // The bound has to cover a long press, which is what the user is doing
+    // to get here, so it is tied to the poll interval rather than a fixed
+    // 3 s - with a 15 s poll a 3 s cap would expire mid-hold.
+    waitForButtonRelease(WAKE_HOLD_MAX_MS);
     mpdSetStandby(true);                        // freeze the network task
     WiFi.mode(WIFI_OFF);
     delay(250);                                 // let the Wi-Fi stack wind down
@@ -139,8 +161,13 @@ static void enterStandby() {
     s_rtcPrev  = encStatePins();
     s_rtcSteps = 0;
     esp_sleep_enable_timer_wakeup((uint64_t)STANDBY_POLL_MS * 1000);
-    Serial.printf("[standby] deep sleep, scanning knob/wheel every %u ms\n",
-                  (unsigned)STANDBY_POLL_MS);
+    // Say how long to hold, because the answer is the poll interval and it
+    // is no longer the ~1 s it used to be.  A user who does not know this
+    // will tap the knob, see nothing happen, and assume it is broken.
+    Serial.printf("[standby] deep sleep, scanning knob/wheel every %u ms - "
+                  "hold the knob or turn the wheel for up to %u s to wake\n",
+                  (unsigned)STANDBY_POLL_MS,
+                  (unsigned)((STANDBY_POLL_MS + 999) / 1000));
     esp_deep_sleep_start();                     // chip resets, setup() re-runs
     Serial.println("[standby] ERROR: deep sleep did not start!");
     esp_restart();                              // should never be reached
@@ -151,7 +178,7 @@ static void enterStandby() {
     // ---- woke up in place (button or wheel) ----
     WiFi.mode(WIFI_STA);                        // the task reconnects on its own
     mpdSetStandby(false);
-    M5.Lcd.wakeup();
+    hwDisplayWake();
     swallowWakeInput();
     Serial.println("[standby] woken, resuming");
 #endif
@@ -206,18 +233,14 @@ void setup() {
     }
 #endif
 
-    auto cfg = M5.config();
-    cfg.fallback_board = m5::board_t::board_M5Dial;  // safety net if probing fails
-    M5Dial.begin(cfg, true, false);  // enable encoder, no RFID
+    hwBegin();
 
     Serial.begin(115200);
-    Serial.printf("M5Dial MPD client - connecting to %s:%d\n", MPD_HOST,
-                  MPD_PORT);
+    Serial.printf("%s MPD client - connecting to %s:%d\n", HW_BOARD_NAME,
+                  MPD_HOST, MPD_PORT);
 
     gShared.mux = xSemaphoreCreateMutex();
     gCmdQueue   = xQueueCreate(12, sizeof(MpdCommand));
-
-    M5Dial.BtnA.setHoldThresh(600);  // long-press = mode switch
 
     uiInit();
     startMpdTask();
@@ -235,13 +258,13 @@ void setup() {
 }
 
 void loop() {
-    M5Dial.update();
+    HW.update();
 
     // ---- long knob press = standby -------------------------------------
 #if STANDBY_PRESS_MS > 0
     static bool s_standbyArmed = false;
-    if (M5Dial.BtnA.isPressed()) {
-        if (!s_standbyArmed && M5Dial.BtnA.pressedFor(STANDBY_PRESS_MS)) {
+    if (HW.BtnA.isPressed()) {
+        if (!s_standbyArmed && HW.BtnA.pressedFor(STANDBY_PRESS_MS)) {
             s_standbyArmed = true;
             enterStandby();
         }
@@ -256,7 +279,7 @@ void loop() {
 #endif
 
     // ---- rotary encoder (volume / playlist scroll) -------------------
-    long e = M5Dial.Encoder.read();
+    long e = HW.Encoder.read();
     long d = e - s_lastEnc;
     if (d != 0) {
         s_lastEnc = e;
@@ -264,10 +287,39 @@ void loop() {
     }
 
     // ---- knob push ----------------------------------------------------
-    if (M5Dial.BtnA.wasClicked()) uiButtonClick();
-    if (M5Dial.BtnA.wasHold()) uiButtonHold();
+    if (HW.BtnA.wasClicked()) uiButtonClick();
+    if (HW.BtnA.wasHold()) uiButtonHold();
     uiButtonDecide();  // single/double-click decision (browser)
     uiTouchTick();     // prev/next touch arrows in now view
+
+    // ---- status LEDs ---------------------------------------------------
+    // The ring shows the device state: a single chasing LED while playing,
+    // a slow yellow breath while paused, dark when stopped, and a red pulse
+    // when there is no network link.  While playing, the chase speed
+    // follows the volume - louder spins faster.  Read under the shared
+    // mutex because the MPD task writes these from its own task, but only
+    // act when something actually changed: the animation task runs on its
+    // own and does not need re-arming every pass.
+    {
+        bool playing, paused, wifi;
+        int  volume;
+        xSemaphoreTake(gShared.mux, portMAX_DELAY);
+        playing = gShared.status.playing;
+        paused  = gShared.status.paused;
+        wifi    = gShared.wifi;
+        volume  = gShared.status.volume;
+        xSemaphoreGive(gShared.mux);
+        static bool wasPlaying = false, wasPaused = false, wasWifi = false;
+        static int  wasVolume  = -2;            // -2: never pushed
+        if (playing != wasPlaying || paused != wasPaused || wifi != wasWifi ||
+            volume != wasVolume) {
+            wasPlaying = playing;
+            wasPaused  = paused;
+            wasWifi    = wifi;
+            wasVolume  = volume;
+            hwLedSetState(playing, paused, wifi, volume);
+        }
+    }
 
     uiTick();
     delay(4);

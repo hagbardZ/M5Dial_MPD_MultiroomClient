@@ -1,5 +1,7 @@
 #include "mpd_task.h"
 
+#include <atomic>
+
 #include <WiFi.h>
 #include <Preferences.h>
 
@@ -9,6 +11,10 @@
 #include "app.h"
 #include "config.h"
 #include "knx_ip.h"
+
+#ifndef VOL_DEBUG
+#define VOL_DEBUG 0
+#endif
 
 // forward declarations -------------------------------------------------
 static void doBrowse(uint8_t type, const String& arg, const String& arg2,
@@ -20,6 +26,15 @@ static void selectInstance(int idx);
 SharedState gShared;
 QueueHandle_t gCmdQueue = nullptr;
 static TaskHandle_t s_mpdTask = nullptr;   // allow suspend during standby
+
+// Volume deltas from the knob.  Kept out of gCmdQueue: a fast turn produces
+// more events than the queue holds, and post() drops on a full queue, which
+// showed up as steps vanishing at speed.  An atomic add cannot lose one.
+static std::atomic<int32_t> s_volPending{0};
+
+void mpdAddVolumeDelta(int32_t delta) {
+    s_volPending.fetch_add(delta, std::memory_order_relaxed);
+}
 
 // ---------------------------------------------------------------------
 static MpdClient    s_mpd;
@@ -158,6 +173,9 @@ static void refreshShared() {
         gShared.song = so;
     }
     xSemaphoreGive(gShared.mux);
+#if VOL_DEBUG
+    if (statusOk) Serial.printf("[vol] status=%d\n", (int)st.volume);
+#endif
 }
 
 // ---------------------------------------------------------------------
@@ -217,7 +235,12 @@ static void execCommand(const MpdCommand& c) {
                 return v;
             }();
             if (cur < 0) break;
-            s_mpd.setVolume(cur + (int)c.value);
+            const bool ok = s_mpd.setVolume(cur + (int)c.value);
+#if VOL_DEBUG
+            Serial.printf("[vol] cur=%d d=%d target=%d ok=%d\n", cur,
+                          (int)c.value, cur + (int)c.value, (int)ok);
+#endif
+            (void)ok;
             break;
         }
         case CMD_PLAY_INDEX:
@@ -308,6 +331,7 @@ static void execCommand(const MpdCommand& c) {
 // KNX device toggles and switching rooms.  Everything else needs MPD and
 // is dropped (it cannot be served anyway while offline).
 static void drainDisconnectedCommands() {
+    s_volPending.store(0, std::memory_order_relaxed);  // cannot serve it
     MpdCommand c;
     while (xQueueReceive(gCmdQueue, &c, 0)) {
         if (c.type == CMD_KNX_TOGGLE)      knxToggle(c.value);
@@ -316,12 +340,13 @@ static void drainDisconnectedCommands() {
 }
 
 static bool drainCommands() {
-    if (uxQueueMessagesWaiting(gCmdQueue) == 0) return false;
+    int32_t pendingVol = s_volPending.exchange(0, std::memory_order_relaxed);
+    if (uxQueueMessagesWaiting(gCmdQueue) == 0 && pendingVol == 0) return false;
     if (s_mpd.idleActive()) s_mpd.endIdle();
 
-    bool    any = false;
-    int32_t volAcc  = 0;
-    bool    haveVol = false;
+    bool    any     = false;
+    int32_t volAcc  = pendingVol;
+    bool    haveVol = (pendingVol != 0);
     MpdCommand c;
     while (xQueueReceive(gCmdQueue, &c, 0)) {
         any = true;
@@ -337,6 +362,7 @@ static bool drainCommands() {
         v.type  = CMD_SET_VOL;
         v.value = volAcc;
         execCommand(v);
+        any = true;      // make the caller refresh status (and the volume)
     }
     return any;
 }
@@ -739,7 +765,7 @@ void startMpdTask() {
 }
 
 // ---------------------------------------------------------------------
-// Freeze / un-freeze the whole network task while the M5Dial is in
+// Freeze / un-freeze the whole network task while the device is in
 // standby (light sleep).  Freezing before Wi-Fi is turned off guarantees
 // the task cannot re-enable Wi-Fi behind our back during the power-down.
 void mpdSetStandby(bool on) {

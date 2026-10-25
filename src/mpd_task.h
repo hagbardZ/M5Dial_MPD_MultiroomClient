@@ -6,6 +6,11 @@
 // reacts to idle events.  Writes into gShared, consumes gCmdQueue.
 void startMpdTask();
 
+// Volume is adjusted by relative deltas from the knob.  Unlike the normal
+// command queue these are accumulated in an atomic word and applied by the
+// MPD task, so a fast turn cannot overflow the queue and lose steps.
+void mpdAddVolumeDelta(int32_t delta);
+
 // Freeze / un-freeze the network task for standby (light sleep).  When
 // entering standby, call mpdSetStandby(true) BEFORE disabling Wi-Fi.
 void mpdSetStandby(bool on);

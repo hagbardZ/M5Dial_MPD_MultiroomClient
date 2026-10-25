@@ -2,7 +2,7 @@
 
 #include <string.h>
 
-#include <M5Dial.h>
+#include "hw.h"
 
 namespace lgfx {
 #include "fonts/DejaVu12Lat1.h"
@@ -15,6 +15,10 @@ namespace lgfx {
 #include "config.h"
 #include "knx_ip.h"
 #include "mpd_task.h"
+
+#ifndef VOL_DEBUG
+#define VOL_DEBUG 0
+#endif
 
 // ---------------------------------------------------------------------
 // Round-screen metrics: 240x240, centre at (120,120), radius 120.
@@ -91,7 +95,7 @@ struct BFrame {
 };
 
 // ---------------------------------------------------------------------
-static M5Canvas spr(&M5Dial.Display);   // PSRAM double buffer
+static M5Canvas spr(&HW.Display);   // PSRAM double buffer
 static Mode  s_mode     = MODE_NOW;
 static int   s_songSel  = 0;             // selection in the queue view
 static int   s_menuSel  = 0;             // selection in the main menu
@@ -100,7 +104,6 @@ static int   s_playSel  = 0;             // selection in the play menu
 static int   s_knxSel   = 0;             // selection in the KNX menu
 static bool  s_dirty    = true;
 static Mode  s_lastMode = Mode(0xFF);    // force first draw
-static int   s_encAcc   = 0;             // encoder jitter accumulator (NOW mode)
 
 static BFrame s_stack[12];
 static int    s_depth = 0;               // # of frames (top = s_depth-1)
@@ -128,10 +131,20 @@ static void showToast(const char* s, uint16_t col) {
     s_toastUntil = millis() + 2200;
 }
 
-static const int kMenuCount = 6;
-static const char* s_menuItems[kMenuCount] = {"Queue", "Files", "Library",
-                                              "Playlists", "Clear playlist",
-                                              "Back"};
+static const char* s_menuItems[] = {
+    "Queue", "Files", "Library", "Playlists", "Clear playlist",
+#if defined(DEVICE_CROWPANEL)
+    "Torch",
+#endif
+    "Back"};
+static const int kMenuCount = (int)(sizeof(s_menuItems) / sizeof(s_menuItems[0]));
+
+#if defined(DEVICE_CROWPANEL)
+static const int kMenuTorch = 5;
+static const int kMenuBack  = 6;
+#else
+static const int kMenuBack  = 5;
+#endif
 
 // colours
 static uint16_t cBg, cRing, cTrack, cProgress, cText, cDim, cOk, cBad,
@@ -252,6 +265,14 @@ static void leaveBrowse() {
 
 // ---------------------------------------------------------------------
 void uiInit() {
+    // The sprite is parented in a file-scope initializer, i.e. before HW's
+    // constructor may have run.  It used to be able to end up with a null
+    // parent, which only blew up much later on the first pushSprite();
+    // see the note in board_crowpanel.h.  Catch it here instead.
+    if (!spr.getParent()) {
+        Serial.println("[ui] FATAL: framebuffer sprite has no parent display");
+        while (true) delay(1000);
+    }
     spr.setColorDepth(16);
     if (!spr.createSprite(240, 240)) {
         // PSRAM unavailable -> fall back to internal RAM
@@ -562,11 +583,19 @@ static void drawMenuView(const SharedState& snap) {
     spr.fillScreen(cBg);
     setFont(s_fSmall);
     drawText(CX, 34, cDim, "MENU");
-    for (int i = 0; i < 5; ++i) {
+    // The Back item is reachable with the knob but not drawn; every board
+    // also has the hold gesture for it.  Showing kMenuCount - 1 rows keeps
+    // that behaviour and still fits the extra CrowPanel torch row.
+    for (int i = 0; i < kMenuCount - 1; ++i) {
         int  y   = 58 + i * 24;
         bool sel = (i == s_menuSel);
         if (sel) spr.fillRoundRect(14, y - 9, 212, 20, 8, cSel);
-        drawText(CX, y, sel ? cText : cDim, s_menuItems[i]);
+        String label = s_menuItems[i];
+#if defined(DEVICE_CROWPANEL)
+        if (i == kMenuTorch)
+            label = String(HW.Leds.torchOn() ? "[x] " : "[ ] ") + label;
+#endif
+        drawText(CX, y, sel ? cText : cDim, label.c_str());
     }
     String foot = "hold: back " + String("(now playing)");
     drawText(CX, 218, cDim, foot.c_str());
@@ -985,12 +1014,18 @@ void uiEncoder(int delta) {
     if (delta == 0) return;
     bumpActivity();
     if (s_mode == MODE_NOW) {
-        // accumulate to cancel ±1 encoder bounce, emit in solid steps
-        s_encAcc += delta;
-        if (s_encAcc >= 2 || s_encAcc <= -2) {
-            post(CMD_SET_VOL, s_encAcc);
-            s_encAcc = 0;
-        }
+        // No accumulation here.  This used to sum two deltas to cancel
+        // ±1 encoder bounce, but the CrowPanel decoder now yields exactly
+        // one signed count per detent (see KnobEncoder in
+        // board_crowpanel.h), so a single turn lands here as ±1 and the
+        // accumulator silently swallowed every other one.  Pass it to the
+        // atomic volume accumulator rather than the command queue, which
+        // would drop deltas when a fast turn fills it.
+#if VOL_DEBUG
+        Serial.printf("[vol] ui t=%lu d=%d pos=%ld\n", (unsigned long)millis(),
+                      delta, (long)HW.Encoder.read());
+#endif
+        mpdAddVolumeDelta(delta);
     } else if (s_mode == MODE_MENU) {
         s_menuSel += delta;
         if (s_menuSel < 0) s_menuSel = kMenuCount - 1;  // wrap
@@ -1091,7 +1126,16 @@ void uiButtonClick() {
             showToast("playlist cleared", cWarn);
             s_dirty = true;
             break;
-        case 5:   // Back (now playing)
+#if defined(DEVICE_CROWPANEL)
+        case kMenuTorch: {
+            HW.Leds.toggleTorch();
+            const bool on = HW.Leds.torchOn();
+            showToast(on ? "torch on" : "torch off", on ? cOk : cDim);
+            s_dirty = true;
+            break;
+        }
+#endif
+        case kMenuBack:   // Back (now playing)
             s_mode = MODE_NOW;
             syncModes();
             s_dirty = true;
@@ -1235,9 +1279,9 @@ static void browseDecide(uint32_t idx, bool dbl) {
 static void decideSingle() {
     if (s_mode != MODE_BROWSE) return;
     bool dbl;
-    if (M5Dial.BtnA.wasDoubleClicked())
+    if (HW.BtnA.wasDoubleClicked())
         dbl = true;
-    else if (M5Dial.BtnA.wasSingleClicked())
+    else if (HW.BtnA.wasSingleClicked())
         dbl = false;
     else
         return;
@@ -1290,7 +1334,7 @@ void uiButtonHold() {
 // Touch must land in the arrow row (y ~ 155–200).
 void uiTouchTick() {
     if (s_mode == MODE_NOW) {
-        const auto& td = M5Dial.Touch.getDetail();
+        const auto& td = HW.Touch.getDetail();
         if (!td.wasClicked()) return;
         bumpActivity();
 
@@ -1345,7 +1389,7 @@ void uiTouchTick() {
         }
     } else if (s_mode == MODE_BROWSE) {
         // Touching an entry plays it (acts like a double-click).
-        const auto& td = M5Dial.Touch.getDetail();
+        const auto& td = HW.Touch.getDetail();
         if (!td.wasClicked()) return;
         bumpActivity();
 
@@ -1373,7 +1417,7 @@ void uiTouchTick() {
         if (sel < 0) sel = 0;
 
         int top = windowTop(sel, snap.brCount);
-for (int i = 0; i < kMenuCount; ++i) {
+for (int i = 0; i < 5; ++i) {
             int idx   = top + i;
             if (idx >= (int)snap.brCount) break;
             int y = 50 + i * 24;
@@ -1393,7 +1437,7 @@ for (int i = 0; i < kMenuCount; ++i) {
         }
     } else if (s_mode == MODE_PLAYMENU || s_mode == MODE_KNX) {
         // tapping a row toggles it; tapping elsewhere does nothing
-        const auto& td = M5Dial.Touch.getDetail();
+        const auto& td = HW.Touch.getDetail();
         if (!td.wasClicked()) return;
         bumpActivity();
         if (s_mode == MODE_PLAYMENU) {

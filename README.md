@@ -1,4 +1,4 @@
-# M5Dial MPD client
+# Round-knob MPD client (M5Dial / CrowPanel 1.28")
 <img width="1408" height="768" alt="MultiroomSchema" src="https://github.com/user-attachments/assets/16a2e74f-1377-4460-9a3c-c772e730fbf1" />
 <img width="200" height="200" alt="3" src="https://github.com/user-attachments/assets/2cd0432c-5442-4966-b122-60725384fb41" />
 <img width="200" height="200" alt="2" src="https://github.com/user-attachments/assets/8b79b56d-5681-4ea4-b3de-fba0de2117ba" />
@@ -9,9 +9,13 @@
 <img width="800" height="625" alt="6" src="https://github.com/user-attachments/assets/b68a5cc8-1a68-4d7b-aceb-f51281e3138f" />
 
 
-A compact [MPD](https://www.musicpd.org/) remote-control client for the
-**M5Stack M5Dial** (ESP32-S3, 1.28" round GC9A01 display, rotary encoder +
-push button).
+A compact [MPD](https://www.musicpd.org/) remote-control client for round
+1.28" knob displays, running on either of two boards:
+
+| Board                                                    | SoC / memory                        | Panel                    | Input                        |
+|----------------------------------------------------------|-------------------------------------|--------------------------|------------------------------|
+| **M5Stack M5Dial** (default env `m5dial`)                | ESP32-S3-FN8, 8 MB flash, no PSRAM  | 240×240 round GC9A01     | rotary encoder + push knob, capacitive touch |
+| **Elecrow CrowPanel 1.28"** (env `crowpanel`)            | ESP32-S3R8, 16 MB flash, 8 MB PSRAM | 240×240 round GC9A01     | rotary encoder + push knob, capacitive touch (CST816D) |
 
 Displays the current track and a progress ring, controls playback and volume,
 lets you browse the music library, filesystem and stored playlists (M.A.L.P.
@@ -31,7 +35,8 @@ style), and reconnects automatically.
   repeat toggle that always repeats the **current song** (`repeat` + `single`),
   never the whole queue.
 - **Main menu** — hold in the now-playing screen for a menu hub:
-  Queue, Files, Library, Playlists, Clear playlist, Back.
+  Queue, Files, Library, Playlists, Clear playlist, Torch (CrowPanel only),
+  Back.
 - **Play menu** — tap the "playing" text in the now-playing screen: toggle
   random and repeat-current, plus (with KNX enabled) the first
   `KNX_PLAYMENU_DEVICES` KNX devices as one-tap rows.  Every device row
@@ -70,6 +75,20 @@ style), and reconnects automatically.
   knob/wheel, and dozes again).  The knob/wheel sit on digital-only pins,
   so deep sleep can never be *triggered* directly from them — the poll is
   the trade-off that makes µA-class chip power possible without a wire.
+- **LED status ring** (CrowPanel only) — the five addressable pixels around
+  the knob report the device state: a **blue** dot circles nine times at boot,
+  then the ring follows playback.  While **playing**, a single **green** pixel
+  chases round a dark ring and its speed tracks the volume — 2 s per
+  revolution when quiet down to 500 ms at full, so the volume is readable
+  from across the room.  While **paused**, all five glow **yellow** and
+  breathe slowly between off and full; **stopped**, the ring is dark.  With
+  no Wi-Fi link the whole ring pulses **red**, which outranks the transport
+  state, because a chase or a breath would otherwise imply a healthy device.
+  Going to standby plays the same three-turn chase in **red** before the
+  panel power is cut.  Selecting **Torch** in the menu holds all five at
+  full white and shows `[x] Torch`; selecting it again turns the torch off
+  and restores the transport animation.  The M5Dial has no addressable
+  LEDs, so the whole feature is absent there.
 - **Queue view** — scroll the MPD queue, press to play an entry.
 - **Files browser** — walk the music directories (`lsinfo`), drill into
   folders, enqueue or play songs / folders / `.m3u` playlists.  Tapping the
@@ -98,7 +117,18 @@ style), and reconnects automatically.
 
 ## Hardware / wiring
 
-None — it's an M5Dial. Just power it via USB-C.
+No wiring in either case — just power the board via USB-C.
+
+- **M5Dial** — plug in and go.
+- **CrowPanel 1.28"** — plug in and go.  The board definition enables both
+  panel rails (GPIO1 = `LCD_3V3`, GPIO2 = `LEDA_3V3`) before the display is
+  initialised, so no jumper is needed.  If your CrowPanel revision uses the
+  4 MB / 8 MB flash variants, adjust `upload.flash_size` and
+  `build.partitions` in `boards/elecrow-crowpanel-128.json`.
+- **LED ring** (CrowPanel only) — the five WS2812 pixels sit on GPIO48 and
+  are fed from the `LEDA_3V3` rail that is already enabled for the display,
+  so they need no wiring either.  The pixel count and data pin come from
+  `variants/crowpanel_128/pins_arduino.h`.
 
 ## Controls
 
@@ -110,6 +140,10 @@ None — it's an M5Dial. Just power it via USB-C.
 | Knob push (long)   | Open main menu                 | Back (up one level)           |
 | Knob push (very long, ≥ `STANDBY_PRESS_MS`) | Standby (sleep)     | Standby (sleep)               |
 | Touch              | Prev/next arrows; tap "playing" for the play menu (random / repeat / KNX devices / KNX submenu); tap the title for the queue; tap room name to switch rooms | Tap an entry to select / play; tap a row in the play/KNX menu to toggle it; tap the bottom counter in the file browser to rescan the folder |
+
+On the CrowPanel, turning the volume knob while music plays also changes how
+fast the green pixel chases round the ring, so the level can be read off the
+LEDs without looking at the screen.
 
 Navigating the browser: rotate to move, click to open a folder / artist /
 album, single-click a playlist to clear the queue and play it, single-click a
@@ -146,7 +180,8 @@ values to match your network.
 ### 3. Build
 
 ```bash
-pio run
+pio run                     # M5Dial (the default environment)
+pio run -e crowpanel        # Elecrow CrowPanel 1.28"
 ```
 
 The first run downloads and installs the ESP32 toolchain, the arduino-esp32
@@ -156,7 +191,8 @@ minutes.  Subsequent builds only compile what changed.
 ### 4. Flash
 
 ```bash
-pio run -t upload       # flash over USB (native USB-CDC, 921600 baud)
+pio run -t upload                    # M5Dial over USB
+pio run -e crowpanel -t upload       # CrowPanel over USB
 ```
 
 If the serial port is not auto-detected, uncomment and set `upload_port` in
@@ -185,14 +221,39 @@ pio run -t upload && pio device monitor   # flash and follow the log
 
 ### Build notes
 
-- The board definition lives in `boards/m5stack-dial.json` (mirrors the
-  official Arduino `M5Stack Dial` board).
-- The M5Dial's ESP32-S3 module is the **FN8** variant — 8 MB flash and
-  **no PSRAM** — so the firmware is tuned for the ~128 KB internal-RAM heap
-  and never relies on PSRAM.
-- The pinned arduino-esp32 fork does not ship the `m5stack_dial` pin map, so
-  it is provided project-locally in `variants/m5stack_dial/pins_arduino.h`
-  and wired in via the board's `build.variants_dir`.
+- The board is picked by a build flag: `-DDEVICE_M5DIAL` for the `m5dial`
+  environment, `-DDEVICE_CROWPANEL` for the `crowpanel` environment.  Neither
+  flag is set by accident, so `include/hw.h` fails the build instead of
+  silently targeting the wrong board.
+- **M5Dial** — the board definition lives in `boards/m5stack-dial.json`
+  (mirrors the official Arduino `M5Stack Dial` board).  The module is the
+  **FN8** variant — 8 MB flash and **no PSRAM** — so the firmware is tuned
+  for the ~128 KB internal-RAM heap and never relies on PSRAM.  The pinned
+  arduino-esp32 fork does not ship the `m5stack_dial` pin map, so it is
+  provided project-locally in `variants/m5stack_dial/pins_arduino.h` and
+  wired in via the board's `build.variants_dir`.
+- **CrowPanel 1.28"** — the board definition lives in
+  `boards/elecrow-crowpanel-128.json` with the pin map in
+  `variants/crowpanel_128/pins_arduino.h`.  M5Unified has no entry for this
+  board, so `include/board_crowpanel.h` drives M5GFX directly: it wires
+  `Panel_GC9A01` (SPI), `Touch_CST816D` (I2C, address `0x15`) and a PWM
+  backlight onto the two panel rails by itself, then adds the same
+  `m5::Button_Class` used by the M5Dial backend.  The knob encoder is
+  decoded locally rather than with the M5Dial `Encoder` class: the PJRC
+  version only attaches interrupts to a fixed pin list (GPIO 0-5, 12-18,
+  21-23, 25-27, 32-36, 39) and the CrowPanel knob is on GPIO 45/42, so it
+  silently degrades to sampling both pins once per `read()` — far too slowly
+  next to the UI redraw, which makes the count alias and the knob appear to
+  jump or run backwards.  The replacement samples both channels every 1 ms
+  on a dedicated task and debounces each one independently: a channel only
+  changes its stable level after holding the new level for four consecutive
+  samples, so contact ring never reaches the quadrature accumulator.  Only
+  stable changes are counted, with full-quadrature cancellation, rest-state
+  resync and diagonal momentum recovery; four net transitions are one
+  detent.  Flash
+  and PSRAM are configured for the ESP32-S3R8 (16 MB flash, **OPI** PSRAM,
+  `memory_type = qio_opi`, `psram_type = opi`) exactly as Elecrow's Arduino
+  instructions do; the UI frame buffer then lives in PSRAM.
 - Version-pin `platform = espressif32@7.1.3` in `platformio.ini` if you need
   a reproducible build.
 
@@ -296,26 +357,66 @@ at `0` the whole standby code is compiled out.
   address (`KNX_MY_ADDRESS`) per free KNX interface slot; devices each
   need their own free tunnelling slot, and ETS/monitoring tools claiming the
   slot show up as a refused connection.
+- **LED ring details** (CrowPanel only) — the strip is driven through RMT
+  rather than bit-banged, because a bit-banged frame that gets preempted part
+  way through corrupts every pixel after the interruption, and this firmware
+  has plenty to preempt it: Wi-Fi, MPD, KNX and the UI all run tasks.  RMT
+  builds the frame in a DMA-capable buffer and the hardware clocks it out
+  with no CPU involvement.  The pinned ESP-IDF (4.4) predates
+  `RMT_DEFAULT_CONFIG()` and the modern `led_strip` component is not linked,
+  so the channel is configured by hand against the legacy driver, and the
+  item buffer comes from `heap_caps_malloc(MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL)`
+  — a plain `malloc()` may return PSRAM, which the RMT interrupt context
+  cannot read, and the symptom is not a crash but a corrupted bitstream, so
+  the pixels come out the wrong colour.  WS2812 is wired GRB, so the frame
+  has to be written byte 0 first, MSB first: a single 23..0 bit counter
+  reads the colour array backwards and shows a green pixel as blue, because
+  the strip treats the first byte it receives as green.
 - The buzzer and IMU are not used in v1.
-- **Standby power** — the display, backlight expander and RFID stay powered
-  in both standby engines, so the board as a whole still draws a fraction of
-  a mA to a few mA on top of the chip.  The deep-poll engine only cuts the
-  *chip* to ~7 µA; long `STANDBY_POLL_MS` values save the most but make the
-  knob/wheel respond lazier (a tap shorter than the interval can be missed —
-  hold ~1 s to wake).
+- **Standby power** — the ~7 µA figure is the *chip* in deep sleep, measured at
+  its VDD pins.  A whole board does not read that: what you measure is
+  dominated by everything around the chip.
+  - The **poll interval** is the term firmware can actually control, and it is
+    a duty-cycle effect rather than a leak.  The chip sleeps at ~7 µA, but each
+    poll is a full boot drawing tens of mA, so the average is roughly
+    `boot_ms × boot_mA / STANDBY_POLL_MS`.  Measured on the CrowPanel: 1000 ms
+    gave 3–11 mA, 15000 ms gave 2.8 mA.  So the interval is worth 1–8 mA and
+    there is a ~2.8 mA floor underneath that firmware cannot reach.  The
+    default stays at 1000 ms because a knob that responds within a second is
+    worth more than the mA; set 15000 if battery life matters more.  The knob
+    and wheel are on GPIO 45/42/41 and the ESP32-S3 has RTC GPIOs only on
+    0–21, so no `ext0`/`ext1` wake is possible and polling is the only option
+    on this board.
+  - What firmware **cannot** reach: the onboard LDO's quiescent current
+    (included if you probe the 5 V input rather than 3V3), a power indicator
+    LED, and anything still powered from a rail that is never switched.
+    Probing 3V3 as well as 5 V separates the regulator from the loads.  Long
+    `STANDBY_POLL_MS` values save the most but make the knob/wheel respond
+    lazier — a tap shorter than the interval is missed, so hold until it wakes,
+    up to `STANDBY_POLL_MS`.
+  - *Light sleep* is the alternative when instant wake matters more than
+    current: it skips the boot entirely but sits at ~0.7–1.5 mA steadily.
 - The M5Dial's ESP32-S3-FN8 has no PSRAM; the 240×240 UI frame buffer lives
   in internal RAM and the client caps RAM usage (compact directory listings,
   a capped playlist fetch, filtered `lsinfo` buffering) so large libraries
-  never cause an out-of-memory crash.
+  never cause an out-of-memory crash.  The CrowPanel has 8 MB of OPI PSRAM, so
+  the same sprite is allocated there; the memory-conservative code paths are
+  kept in place anyway so one UI serves both boards.
 
 ## Project layout
 
 ```
-boards/        custom M5Dial board definition (PlatformIO)
+boards/        custom board definitions (PlatformIO): m5stack-dial + elecrow-crowpanel-128
 include/       config.h (not in the repo — create it from the example below)
-variants/      project-local m5stack_dial pin map (pins_arduino.h)
+               hw.h                    -> the board backend chosen by the build flag
+               board_m5dial.h          -> M5Dial backend (wraps M5Dial)
+               board_crowpanel.h       -> CrowPanel backend (M5GFX + button, encoder,
+                                          WS2812 LED ring) and their shared statics
+variants/      project-local pin maps (m5stack_dial, crowpanel_128)
 lib/MpdClient/ MPD protocol client + PSRAM playlist parser
 src/           main, background MPD task, round-screen UI, KNX tunneling client
+               hw.cpp -> storage for the process-wide singletons the board headers
+                         declare (encoder registers, RMT channel, LED buffers)
 ```
 
 ### example include/config.h:
@@ -325,11 +426,18 @@ src/           main, background MPD task, round-screen UI, KNX tunneling client
 #pragma once
 
 // =====================================================================
-//  M5Dial MPD client - configuration
+//  Round-knob MPD client - configuration
 //
 //  Adjust the values below to match your network and MPD setup, then
 //  build with `pio run` and flash with `pio run -t upload`.
 // =====================================================================
+
+// ---- Target hardware ----------------------------------------------------
+// Selected by the build flag in platformio.ini:
+//   m5dial     -> DEVICE_M5DIAL      (M5Stack M5Dial)
+//   crowpanel  -> DEVICE_CROWPANEL   (Elecrow CrowPanel 1.28")
+// Exactly one of them must be set; hw.h pulls in the matching backend and
+// fails the build otherwise.
 
 // ---- Time (NTP wall clock for webradio) ------------------------------
 // While a webradio stream is playing, the now view shows the local
